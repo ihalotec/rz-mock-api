@@ -1,0 +1,5 @@
+{
+  "name": "CastleMock Lite",
+  "description": "A REST API mocking platform with a Scalar-inspired UI. Features project management, Swagger import, and an integrated test console.",
+  "requestFramePermissions": []
+}

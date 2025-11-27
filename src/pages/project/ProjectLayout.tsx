@@ -1,0 +1,317 @@
+
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import Sidebar from './Sidebar';
+import EndpointViewer from './EndpointViewer';
+import TestConsole from './TestConsole';
+import LogMonitor from './LogMonitor';
+import { store } from '../../lib/store';
+import { Project, MockEndpoint } from '../../lib/types';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { FloatingPanel } from '../../components/ui/FloatingPanel';
+import { PlayCircle, Activity, Upload, Link as LinkIcon, FileJson, Loader2 } from 'lucide-react';
+
+const ProjectLayout = () => {
+  const { projectId } = useParams();
+  const navigate = useNavigate();
+  const [project, setProject] = useState<Project | undefined>();
+  const [endpoints, setEndpoints] = useState<MockEndpoint[]>([]);
+  const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
+  
+  // Floating Window States
+  const [showTestConsole, setShowTestConsole] = useState(true);
+  const [testConsoleMinimized, setTestConsoleMinimized] = useState(false);
+
+  const [showLogs, setShowLogs] = useState(false);
+  const [logsMinimized, setLogsMinimized] = useState(false);
+  
+  // Modals
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  
+  const [newEndpoint, setNewEndpoint] = useState({ name: '', path: '/', method: 'GET' });
+
+  useEffect(() => {
+    if (!projectId) return;
+    const p = store.getProject(projectId);
+    if (!p) {
+        navigate('/');
+        return;
+    }
+    setProject(p);
+    refreshEndpoints();
+  }, [projectId]);
+
+  const refreshEndpoints = () => {
+     if (projectId) {
+         setEndpoints(store.getEndpoints(projectId));
+     }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+          try {
+              const result = evt.target?.result;
+              if (typeof result !== 'string') throw new Error("Failed to read file");
+              
+              const json = JSON.parse(result);
+              if (projectId) {
+                  store.importSwagger(projectId, json);
+                  refreshEndpoints();
+                  setIsImportModalOpen(false);
+              }
+          } catch (err: any) {
+              console.error("Import failed:", err);
+              alert(`Import failed: ${err.message}`);
+          }
+      };
+      reader.readAsText(file);
+  };
+
+  const handleUrlImport = async () => {
+      if (!importUrl) return;
+      setIsImporting(true);
+      try {
+          let response;
+          try {
+              // Try direct fetch first
+              response = await fetch(importUrl);
+              if (!response.ok) throw new Error(`Status ${response.status}`);
+          } catch (directError) {
+              console.warn("Direct fetch failed, attempting proxy...", directError);
+              // Fallback to CORS proxy if direct fetch fails (likely due to CORS)
+              const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(importUrl)}`;
+              response = await fetch(proxyUrl);
+          }
+          
+          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+          const json = await response.json();
+          if (projectId) {
+              store.importSwagger(projectId, json);
+              refreshEndpoints();
+              setIsImportModalOpen(false);
+              setImportUrl('');
+          }
+      } catch (e: any) {
+          console.error("URL Import failed:", e);
+          alert(`Failed to import from URL: ${e.message}. \n\nIf this is a CORS issue and the proxy failed, try downloading the file and uploading it manually.`);
+      } finally {
+          setIsImporting(false);
+      }
+  };
+
+  const handleToggleServer = () => {
+      if (project) {
+          const newStatus = project.status === 'running' ? 'stopped' : 'running';
+          store.updateProjectStatus(project.id, newStatus);
+          setProject({ ...project, status: newStatus });
+      }
+  };
+
+  const handleCreateEndpoint = () => {
+      if(projectId && newEndpoint.name && newEndpoint.path) {
+          const ep = store.createEndpoint(projectId, newEndpoint.method, newEndpoint.path, newEndpoint.name);
+          // Create default response
+          store.createResponse(ep.id, "Success", "{}", 200);
+          refreshEndpoints();
+          setSelectedEndpointId(ep.id);
+          setIsCreateModalOpen(false);
+          setNewEndpoint({ name: '', path: '/', method: 'GET' });
+      }
+  };
+
+  if (!project) return <div className="p-10 text-white">Loading...</div>;
+
+  const selectedEndpoint = endpoints.find(e => e.id === selectedEndpointId);
+
+  return (
+    <div className="flex h-screen overflow-hidden relative">
+      <Sidebar 
+        endpoints={endpoints} 
+        selectedEndpointId={selectedEndpointId || undefined}
+        onSelectEndpoint={setSelectedEndpointId}
+        onImportSwagger={() => setIsImportModalOpen(true)}
+        onToggleServer={handleToggleServer}
+        isServerRunning={project.status === 'running'}
+        onCreateEndpoint={() => setIsCreateModalOpen(true)}
+      />
+      
+      <main className="flex-1 ml-80 flex bg-background">
+        {selectedEndpoint ? (
+            <>
+                <div className="flex-1 min-w-0 flex flex-col">
+                    <EndpointViewer endpoint={selectedEndpoint} onUpdate={refreshEndpoints} />
+                    
+                    {/* Floating Panel Triggers (Bottom Bar) */}
+                    <div className="h-10 border-t border-border bg-[#16181d] flex items-center px-4 gap-4">
+                        <button 
+                            onClick={() => { setShowTestConsole(true); setTestConsoleMinimized(false); }}
+                            className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded transition-colors ${showTestConsole && !testConsoleMinimized ? 'bg-primary/20 text-primary' : 'text-gray-400 hover:text-white'}`}
+                        >
+                            <PlayCircle className="w-4 h-4" /> Test Console
+                        </button>
+                        <button 
+                            onClick={() => { setShowLogs(true); setLogsMinimized(false); }}
+                            className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded transition-colors ${showLogs && !logsMinimized ? 'bg-success/20 text-success' : 'text-gray-400 hover:text-white'}`}
+                        >
+                            <Activity className="w-4 h-4" /> Log Monitor
+                        </button>
+                    </div>
+                </div>
+            </>
+        ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
+                <h2 className="text-xl font-semibold mb-2">Welcome to {project.name}</h2>
+                <p>Select an endpoint from the sidebar or import a Swagger file to get started.</p>
+                <Button className="mt-4" onClick={() => setIsImportModalOpen(true)}>
+                    <Upload className="w-4 h-4 mr-2" /> Import Swagger
+                </Button>
+            </div>
+        )}
+      </main>
+
+      {/* Floating Windows Layer */}
+      {selectedEndpoint && (
+        <>
+            <FloatingPanel 
+                title="Test Console" 
+                isOpen={showTestConsole}
+                isMinimized={testConsoleMinimized}
+                onClose={() => setShowTestConsole(false)}
+                onMinimize={() => setTestConsoleMinimized(!testConsoleMinimized)}
+                initialPosition={{ x: window.innerWidth - 450, y: 80 }}
+                initialSize={{ w: 400, h: 500 }}
+                icon={<PlayCircle className="w-4 h-4 text-white" />}
+                colorClass="bg-primary"
+            >
+                <TestConsole endpoint={selectedEndpoint} project={project} />
+            </FloatingPanel>
+
+            <FloatingPanel 
+                title="Log Monitor" 
+                isOpen={showLogs}
+                isMinimized={logsMinimized}
+                onClose={() => setShowLogs(false)}
+                onMinimize={() => setLogsMinimized(!logsMinimized)}
+                initialPosition={{ x: window.innerWidth - 450, y: 600 }}
+                initialSize={{ w: 400, h: 300 }}
+                icon={<Activity className="w-4 h-4 text-white" />}
+                colorClass="bg-success"
+            >
+                <LogMonitor projectId={project.id} />
+            </FloatingPanel>
+        </>
+      )}
+
+      {/* Create Endpoint Modal */}
+      {isCreateModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+             <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-full max-w-md shadow-2xl">
+                 <h2 className="text-lg font-bold text-white mb-4">Create Endpoint</h2>
+                 <div className="space-y-4">
+                     <div>
+                         <label className="text-xs text-gray-400 mb-1 block">Name</label>
+                         <Input 
+                            value={newEndpoint.name}
+                            onChange={(e) => setNewEndpoint({...newEndpoint, name: e.target.value})}
+                            placeholder="Get Users"
+                         />
+                     </div>
+                     <div className="flex gap-4">
+                         <div className="w-1/3">
+                             <label className="text-xs text-gray-400 mb-1 block">Method</label>
+                             <select 
+                                className="w-full h-10 rounded-md border border-gray-700 bg-gray-900 px-3 text-sm text-white focus:outline-none"
+                                value={newEndpoint.method}
+                                onChange={(e) => setNewEndpoint({...newEndpoint, method: e.target.value})}
+                             >
+                                 <option value="GET">GET</option>
+                                 <option value="POST">POST</option>
+                                 <option value="PUT">PUT</option>
+                                 <option value="DELETE">DELETE</option>
+                                 <option value="PATCH">PATCH</option>
+                             </select>
+                         </div>
+                         <div className="flex-1">
+                             <label className="text-xs text-gray-400 mb-1 block">Path</label>
+                             <Input 
+                                value={newEndpoint.path}
+                                onChange={(e) => setNewEndpoint({...newEndpoint, path: e.target.value})}
+                                placeholder="/users"
+                             />
+                         </div>
+                     </div>
+                 </div>
+                 <div className="flex justify-end gap-2 mt-6">
+                     <Button variant="ghost" onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
+                     <Button onClick={handleCreateEndpoint}>Create</Button>
+                 </div>
+             </div>
+          </div>
+      )}
+
+      {/* Import Modal */}
+      {isImportModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+             <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-full max-w-lg shadow-2xl">
+                 <h2 className="text-lg font-bold text-white mb-6">Import OpenAPI / Swagger</h2>
+                 
+                 <div className="space-y-6">
+                     <div className="p-4 border border-dashed border-gray-700 rounded-lg bg-gray-800/30">
+                         <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
+                             <FileJson className="w-4 h-4 mr-2" /> Upload JSON File
+                         </h3>
+                         <input 
+                            type="file" 
+                            accept=".json"
+                            onChange={handleFileUpload}
+                            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-white hover:file:bg-blue-600"
+                         />
+                     </div>
+
+                     <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                            <span className="w-full border-t border-gray-800" />
+                        </div>
+                        <div className="relative flex justify-center text-xs uppercase">
+                            <span className="bg-gray-900 px-2 text-gray-500">Or import from URL</span>
+                        </div>
+                     </div>
+
+                     <div className="p-4 border border-gray-800 rounded-lg bg-gray-800/30">
+                         <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
+                             <LinkIcon className="w-4 h-4 mr-2" /> Import from URL
+                         </h3>
+                         <div className="flex gap-2">
+                             <Input 
+                                placeholder="https://api.example.com/swagger.json" 
+                                value={importUrl}
+                                onChange={(e) => setImportUrl(e.target.value)}
+                             />
+                             <Button onClick={handleUrlImport} disabled={!importUrl || isImporting}>
+                                 {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Import'}
+                             </Button>
+                         </div>
+                         <p className="text-[10px] text-gray-500 mt-2">
+                             Note: If the server blocks cross-origin requests, a proxy will be used automatically.
+                         </p>
+                     </div>
+                 </div>
+
+                 <div className="flex justify-end mt-6">
+                     <Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Close</Button>
+                 </div>
+             </div>
+          </div>
+      )}
+    </div>
+  );
+};
+
+export default ProjectLayout;
