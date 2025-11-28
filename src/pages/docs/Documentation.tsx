@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Header } from '../../components/layout/Header';
-import { Flag, Shuffle, Split, ChevronRight, Hash, ArrowRight } from 'lucide-react';
+import { Flag, Shuffle, Split, ChevronRight, Hash, ArrowRight, AlertTriangle, Layers } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 const sections = [
@@ -9,6 +9,8 @@ const sections = [
   { id: 'response-strategies', title: 'Response Strategies' },
   { id: 'matching-logic', title: 'Conditional Matching' },
   { id: 'example-login', title: 'Example: Login Flow' },
+  { id: 'simulating-chaos', title: 'Simulating Chaos' },
+  { id: 'rest-methods', title: 'REST Methods & CRUD' },
 ];
 
 const Documentation = () => {
@@ -39,7 +41,7 @@ const Documentation = () => {
     if (element) {
       const headerOffset = 80;
       const elementPosition = element.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+      const offsetPosition = elementPosition + window.scrollY - headerOffset;
 
       window.scrollTo({
         top: offsetPosition,
@@ -272,6 +274,68 @@ const Documentation = () => {
                                     Returns 403 Forbidden with <code>{`{ "error": "User locked" }`}</code>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="simulating-chaos" className="mb-20 scroll-mt-24">
+                <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                    <AlertTriangle className="w-6 h-6 text-yellow-500" />
+                    Simulating Chaos
+                </h2>
+                <p className="text-gray-400 mb-6">
+                    Use the <strong>Random</strong> strategy to test how your frontend handles instability.
+                </p>
+                <div className="bg-[#16181d] border border-gray-800 rounded-xl p-6">
+                    <h3 className="font-semibold text-white mb-4">Steps to create a "Flaky" Endpoint:</h3>
+                    <ol className="list-decimal list-inside text-sm text-gray-400 space-y-3 mb-6">
+                        <li>Select an endpoint (e.g., <code>GET /api/dashboard</code>).</li>
+                        <li>Create a <strong>Success</strong> response (200 OK).</li>
+                        <li>Create a <strong>Server Error</strong> response (500 Internal Server Error).</li>
+                        <li>Create a <strong>Timeout</strong> response (503 Service Unavailable) with a high Latency (e.g., 5000ms).</li>
+                        <li>Set the Endpoint Strategy to <strong>Random</strong>.</li>
+                    </ol>
+                    <div className="p-4 bg-black/40 rounded border border-gray-800/50">
+                        <p className="text-xs text-gray-500 mb-2">Outcome:</p>
+                        <p className="text-sm text-gray-300">
+                            Every time you hit the endpoint, you have a 33% chance of getting success, failure, or a timeout. 
+                            This is excellent for testing loading spinners, error boundaries, and retry logic.
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <section id="rest-methods" className="mb-20 scroll-mt-24">
+                <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+                    <Layers className="w-6 h-6 text-blue-500" />
+                    REST Methods & CRUD
+                </h2>
+                <div className="space-y-4">
+                    <p className="text-gray-400">
+                        CastleMock allows you to define multiple endpoints with the <strong>same path</strong> but <strong>different methods</strong>.
+                    </p>
+                    
+                    <div className="grid gap-4">
+                        <div className="flex items-center gap-4 bg-[#16181d] p-3 rounded border border-gray-800">
+                            <span className="font-mono text-xs font-bold text-blue-400 bg-blue-900/20 px-2 py-1 rounded w-16 text-center">GET</span>
+                            <code className="text-sm text-gray-300">/api/users</code>
+                            <span className="text-xs text-gray-500 ml-auto">Return list of users</span>
+                        </div>
+                        <div className="flex items-center gap-4 bg-[#16181d] p-3 rounded border border-gray-800">
+                            <span className="font-mono text-xs font-bold text-green-400 bg-green-900/20 px-2 py-1 rounded w-16 text-center">POST</span>
+                            <code className="text-sm text-gray-300">/api/users</code>
+                            <span className="text-xs text-gray-500 ml-auto">Simulate creation (return 201 Created)</span>
+                        </div>
+                        <div className="flex items-center gap-4 bg-[#16181d] p-3 rounded border border-gray-800">
+                            <span className="font-mono text-xs font-bold text-orange-400 bg-orange-900/20 px-2 py-1 rounded w-16 text-center">PUT</span>
+                            <code className="text-sm text-gray-300">/api/users/123</code>
+                            <span className="text-xs text-gray-500 ml-auto">Simulate update</span>
+                        </div>
+                        <div className="flex items-center gap-4 bg-[#16181d] p-3 rounded border border-gray-800">
+                            <span className="font-mono text-xs font-bold text-red-400 bg-red-900/20 px-2 py-1 rounded w-16 text-center">DELETE</span>
+                            <code className="text-sm text-gray-300">/api/users/123</code>
+                            <span className="text-xs text-gray-500 ml-auto">Simulate deletion (return 204 No Content)</span>
                         </div>
                     </div>
                 </div>
