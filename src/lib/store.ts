@@ -1,6 +1,7 @@
 import { StoreData, Project, MockEndpoint, MockResponse, LogEntry, SwaggerDocs } from './types';
 import { generateId, resolveRefs } from './utils';
 import { findMatch } from './matcher';
+import { parseSwagger } from './parser';
 
 const DB_NAME = 'CastleMockLiteDB';
 const STORE_NAME = 'state';
@@ -15,46 +16,55 @@ const initialData: StoreData = {
 type LogListener = (log: LogEntry) => void;
 type DataListener = () => void;
 
-function generateExample(schema: any): any {
-    if (!schema) return "null";
-    if (schema.example) return schema.example;
-    if (schema.default) return schema.default;
-
-    if (schema.type === 'object' || schema.properties) {
-        const obj: any = {};
-        const props = schema.properties || {};
-        Object.keys(props).forEach(key => {
-            obj[key] = generateExample(props[key]);
-        });
-        return obj;
-    }
-
-    if (schema.type === 'array') {
-        if (schema.items) return [generateExample(schema.items)];
-        return [];
-    }
-
-    if (schema.type === 'string') {
-        if (schema.format === 'date-time') return new Date().toISOString();
-        if (schema.format === 'email') return "user@example.com";
-        if (schema.format === 'uuid') return "3fa85f64-5717-4562-b3fc-2c963f66afa6";
-        if (schema.enum && schema.enum.length > 0) return schema.enum[0];
-        return "string";
-    }
-
-    if (schema.type === 'integer' || schema.type === 'number') return 0;
-    if (schema.type === 'boolean') return true;
-
-    return "unknown";
-}
-
-
 class MockStore {
   private data: StoreData = { ...initialData };
   private db: IDBDatabase | null = null;
   private logListeners: LogListener[] = [];
-  private dataListeners: DataListener[] = []; // New general data listeners
+  private dataListeners: DataListener[] = [];
   private initialized = false;
+  
+  // Worker for heavy lifting
+  private worker: Worker | null = null;
+  private workerCallbacks: Map<string, (data: any) => void> = new Map();
+
+  constructor() {
+      // Initialize Worker with fallback
+      this.initWorker();
+  }
+
+  private initWorker() {
+      try {
+          // Check if we are in an environment that supports modules and import.meta
+          if (typeof import.meta !== 'undefined' && import.meta.url) {
+              try {
+                 // Try to construct the URL relative to the current module
+                 const workerUrl = new URL('./worker.ts', import.meta.url);
+                 this.worker = new Worker(workerUrl, { type: 'module' });
+                 
+                 this.worker.onerror = (e) => {
+                      // Silent fallback on error
+                      console.warn("Worker failed to load. Falling back to main thread operations.");
+                      this.worker = null;
+                 };
+
+                 this.worker.onmessage = (e) => {
+                      const { type, id, payload } = e.data;
+                      if (this.workerCallbacks.has(id)) {
+                          this.workerCallbacks.get(id)!(payload);
+                          this.workerCallbacks.delete(id);
+                      }
+                  };
+              } catch (e) {
+                  // URL construction failed
+                  console.debug("Could not construct worker URL, using main thread.");
+                  this.worker = null;
+              }
+          }
+      } catch (e) {
+          // General failure
+          this.worker = null;
+      }
+  }
 
   async init(): Promise<void> {
       if (this.initialized) return;
@@ -75,6 +85,7 @@ class MockStore {
                   this.initialized = true;
                   resolve();
                   this.notifyDataChange();
+                  this.syncWorker(); // Send initial data to worker
               });
           };
 
@@ -109,8 +120,15 @@ class MockStore {
         const store = tx.objectStore(STORE_NAME);
         store.put(this.data, DATA_KEY);
         this.notifyDataChange();
+        this.syncWorker();
       } catch (e) {
           console.error("Failed to save to IndexedDB", e);
+      }
+  }
+
+  private syncWorker() {
+      if (this.worker) {
+          this.worker.postMessage({ type: 'SYNC_DATA', payload: this.data });
       }
   }
 
@@ -228,7 +246,6 @@ class MockStore {
       this.data.responses.push(...newResponses);
       this.save();
       return newProject;
-      
   }
 
   // Endpoints
@@ -316,106 +333,120 @@ class MockStore {
     this.save();
   }
 
-  // Mock Engine
-  findMatch(projectId: string, method: string, path: string, requestBody?: string, requestHeaders?: Record<string, string>): { endpoint: MockEndpoint, response: MockResponse, matchedStrategy: string } | null {
-    const start = Date.now();
-    const result = findMatch(this.data, projectId, method, path, requestBody, requestHeaders);
+  // --- Async Mock Engine ---
+  
+  async simulateRequest(projectId: string, method: string, path: string, requestBody?: string, requestHeaders?: Record<string, string>): Promise<{ endpoint: MockEndpoint, response: MockResponse, matchedStrategy: string } | null> {
+    
+    const processResult = (result: any) => {
+        const start = Date.now();
+        const commonLogFields = {
+            id: generateId(),
+            projectId,
+            timestamp: start,
+            method: method as any,
+            path,
+            requestBody,
+            duration: 5,
+        };
 
-    const commonLogFields = {
-        id: generateId(),
-        projectId,
-        timestamp: start,
-        method: method as any,
-        path,
-        requestBody,
-        duration: Date.now() - start,
-    };
-
-    if (!result) {
-        // If findMatch returns null, it means no project/endpoint found, OR project stopped.
-        // We need to differentiate for logging, but findMatch abstraction hides details.
-        // For simplicity, we check project status here briefly or assume 404/503 based on data.
-        const project = this.data.projects.find(p => p.id === projectId);
-        if (!project || project.status === 'stopped') {
+        if (!result) {
+                const project = this.data.projects.find(p => p.id === projectId);
+                if (!project || project.status === 'stopped') {
+                this.notifyLog({
+                    ...commonLogFields,
+                    status: 503,
+                    responseBody: JSON.stringify({ error: "Server stopped" }),
+                    responseName: "System Error"
+                });
+            } else {
+                    this.notifyLog({
+                    ...commonLogFields,
+                    status: 404,
+                    responseBody: JSON.stringify({ error: "Not Found" }),
+                    responseName: "System Error"
+                });
+            }
+            return null;
+        } else {
             this.notifyLog({
                 ...commonLogFields,
-                status: 503,
-                responseBody: JSON.stringify({ error: "Server stopped" }),
-                responseName: "System Error"
+                status: result.response.statusCode,
+                responseBody: result.response.body,
+                responseName: result.response.name
             });
-        } else {
-             this.notifyLog({
-                ...commonLogFields,
-                status: 404,
-                responseBody: JSON.stringify({ error: "Not Found" }),
-                responseName: "System Error"
-            });
+            return result;
         }
-        return null;
-    }
+    };
 
-    this.notifyLog({
-        ...commonLogFields,
-        status: result.response.statusCode,
-        responseBody: result.response.body,
-        responseName: result.response.name
-    });
+    // Worker Path (if initialized)
+    if (this.worker) {
+        return new Promise((resolve) => {
+            const reqId = generateId();
+            const timeout = setTimeout(() => {
+                // Timeout fallback
+                resolve(null); 
+            }, 5000); 
 
-    return result;
+            this.workerCallbacks.set(reqId, (result: any) => {
+                clearTimeout(timeout);
+                resolve(processResult(result));
+            });
+
+            this.worker!.postMessage({
+                type: 'FIND_MATCH',
+                id: reqId,
+                payload: { projectId, method, path, requestBody, requestHeaders }
+            });
+        });
+    } 
+    
+    // Fallback: Main Thread (Sync)
+    // This is executed if worker is null (failed to init or crash)
+    const result = findMatch(this.data, projectId, method, path, requestBody, requestHeaders);
+    return processResult(result);
   }
 
-  importSwagger(projectId: string, swaggerJson: any) {
-    const paths = swaggerJson.paths || {};
+  async importSwagger(projectId: string, swaggerJson: any): Promise<void> {
     const project = this.getProject(projectId);
     if (project && swaggerJson.components) {
         project.components = swaggerJson.components;
     }
-    const resolveForExample = (obj: any) => resolveRefs(obj, swaggerJson);
+    
+    // Worker Path
+    if (this.worker) {
+        return new Promise((resolve, reject) => {
+             const reqId = generateId();
+             this.workerCallbacks.set(reqId, (data: any) => {
+                 if (typeof data === 'string') {
+                     console.error(data);
+                     reject(data);
+                     return;
+                 }
+                 const { endpoints, responses } = data;
+                 this.data.endpoints.push(...endpoints);
+                 this.data.responses.push(...responses);
+                 this.save();
+                 resolve();
+             });
+    
+             this.worker!.postMessage({
+                 type: 'PARSE_SWAGGER',
+                 id: reqId,
+                 payload: { projectId, swaggerJson }
+             });
+        });
+    }
 
-    Object.keys(paths).forEach(path => {
-      try {
-          const methods = paths[path];
-          Object.keys(methods).forEach(methodKey => {
-            const method = methodKey.toUpperCase();
-            if (method === 'PARAMETERS') return; 
-
-            const details = methods[methodKey];
-            const docs: SwaggerDocs = {
-                summary: details.summary,
-                description: details.description,
-                tags: details.tags || [],
-                parameters: details.parameters,
-                requestBody: details.requestBody,
-                responses: details.responses
-            };
-
-            const newEndpoint = this.createEndpoint(projectId, method as any, path, details.summary || details.operationId || `${method} ${path}`);
-            if (details.description) newEndpoint.description = details.description;
-            newEndpoint.docs = docs;
-            this.updateEndpoint(newEndpoint);
-
-            let responseBody = '{}';
-            const successKey = Object.keys(details.responses || {}).find(k => k.startsWith('2'));
-            let successResponse = successKey ? details.responses[successKey] : null;
-            
-            if (successResponse) {
-                successResponse = resolveForExample(successResponse);
-                const jsonContent = successResponse?.content?.['application/json'];
-                if (jsonContent) {
-                    if (jsonContent.example) responseBody = JSON.stringify(jsonContent.example, null, 2);
-                    else if (jsonContent.schema) {
-                        try {
-                            const resolvedSchema = resolveForExample(jsonContent.schema);
-                            responseBody = JSON.stringify(generateExample(resolvedSchema), null, 2);
-                        } catch (e) { responseBody = '{}'; }
-                    }
-                }
-            }
-            this.createResponse(newEndpoint.id, successKey ? `${successKey} Response` : "Default 200", responseBody, successKey ? parseInt(successKey) : 200);
-          });
-      } catch (err) { console.error(`Failed to process path: ${path}`, err); }
-    });
-    this.save();
+    // Fallback: Main Thread (Sync)
+    try {
+        const { endpoints, responses } = parseSwagger(projectId, swaggerJson);
+        this.data.endpoints.push(...endpoints);
+        this.data.responses.push(...responses);
+        this.save();
+    } catch (e) {
+        console.error("Import failed on main thread", e);
+        throw e;
+    }
   }
 }
 

@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect } from 'react';
 import { Play, Loader2, FileJson, Plus, Trash2, X, Tag } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
@@ -82,10 +80,10 @@ const TestConsole = ({ endpoint, project }: TestConsoleProps) => {
         return acc;
     }, {} as Record<string, string>);
 
-    // Simulate Network Latency
-    setTimeout(() => {
-        // Pass headers to log or matcher? Currently matcher doesn't use them but we simulate the request.
-        const match = store.findMatch(project.id, endpoint.method, urlPath, requestBody, effectiveHeaders);
+    // Simulate Network Latency + Worker Delay
+    try {
+        // Now using Async worker method
+        const match = await store.simulateRequest(project.id, endpoint.method, urlPath, requestBody, effectiveHeaders);
         
         if (match) {
             // Calculate Delay
@@ -120,7 +118,12 @@ const TestConsole = ({ endpoint, project }: TestConsoleProps) => {
             setResponse({ error: "No mock response found for this path/method combination." });
             setLoading(false);
         }
-    }, 100);
+    } catch (e) {
+        console.error(e);
+        setStatus(500);
+        setResponse({ error: "Internal Error during test" });
+        setLoading(false);
+    }
   };
 
   const showBodyInput = ['POST', 'PUT', 'PATCH'].includes(endpoint.method);
