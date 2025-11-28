@@ -1,7 +1,5 @@
-
-
 import { StoreData, Project, MockEndpoint, MockResponse, LogEntry, SwaggerDocs } from './types';
-import { generateId } from './utils';
+import { generateId, resolveRefs } from './utils';
 
 const DB_NAME = 'CastleMockLiteDB';
 const STORE_NAME = 'state';
@@ -14,22 +12,17 @@ const initialData: StoreData = {
 };
 
 type LogListener = (log: LogEntry) => void;
+type DataListener = () => void;
 
 // --- Helper Functions ---
-
 // Simple object path retrieval for JSON matching
 function getObjectValue(obj: any, path: string): any {
   if (!path) return undefined;
-  // Handle simple dot notation $.key.subkey or key.subkey or key[0].subkey
   const cleanPath = path.startsWith('$.') ? path.substring(2) : path;
-  
-  // Normalize array access from [0] to .0
   const normalizedPath = cleanPath.replace(/\[(\d+)\]/g, '.$1');
-
   return normalizedPath.split('.').reduce((o, i) => (o ? o[i] : undefined), obj);
 }
 
-// Deep subset matching: checks if 'subset' is present within 'actual'
 function isSubset(subset: any, actual: any): boolean {
     if (subset === actual) return true;
     if (subset instanceof Date && actual instanceof Date) return subset.getTime() === actual.getTime();
@@ -42,60 +35,11 @@ function isSubset(subset: any, actual: any): boolean {
         }
         return true;
     }
-
     return Object.keys(subset).every(key => isSubset(subset[key], actual[key]));
 }
 
-// Recursively resolve Swagger $ref pointers
-function resolveRefs(obj: any, root: any, stack: string[] = []): any {
-    if (obj === null || typeof obj !== 'object') {
-        return obj;
-    }
-
-    if (Array.isArray(obj)) {
-        return obj.map(item => resolveRefs(item, root, stack));
-    }
-
-    // Check if this object is a reference
-    if (obj.$ref && typeof obj.$ref === 'string') {
-        const ref = obj.$ref;
-        if (stack.includes(ref)) {
-             // Circular detection
-             return { type: 'object', description: `[Circular: ${ref.split('/').pop()}]` };
-        }
-        
-        if (ref.startsWith('#/')) {
-            const path = ref.substring(2).split('/');
-            let current = root;
-            for (const segment of path) {
-                current = current?.[segment];
-                if (current === undefined) break;
-            }
-            if (current !== undefined) {
-                // Resolve the referenced object
-                const resolved = resolveRefs(current, root, [...stack, ref]);
-                // Return a new object merging the resolved content
-                if (resolved !== null && typeof resolved === 'object') {
-                    const { $ref, ...rest } = obj;
-                    return { ...resolved, ...rest };
-                }
-                return resolved;
-            }
-        }
-    }
-
-    // Recursively process keys
-    const result: any = {};
-    for (const key in obj) {
-        result[key] = resolveRefs(obj[key], root, stack);
-    }
-    return result;
-}
-
-// Generate a dummy example from a schema if no example is provided
 function generateExample(schema: any): any {
     if (!schema) return "null";
-    
     if (schema.example) return schema.example;
     if (schema.default) return schema.default;
 
@@ -109,9 +53,7 @@ function generateExample(schema: any): any {
     }
 
     if (schema.type === 'array') {
-        if (schema.items) {
-            return [generateExample(schema.items)];
-        }
+        if (schema.items) return [generateExample(schema.items)];
         return [];
     }
 
@@ -123,13 +65,8 @@ function generateExample(schema: any): any {
         return "string";
     }
 
-    if (schema.type === 'integer' || schema.type === 'number') {
-        return 0;
-    }
-
-    if (schema.type === 'boolean') {
-        return true;
-    }
+    if (schema.type === 'integer' || schema.type === 'number') return 0;
+    if (schema.type === 'boolean') return true;
 
     return "unknown";
 }
@@ -138,10 +75,10 @@ function generateExample(schema: any): any {
 class MockStore {
   private data: StoreData = { ...initialData };
   private db: IDBDatabase | null = null;
-  private listeners: LogListener[] = [];
+  private logListeners: LogListener[] = [];
+  private dataListeners: DataListener[] = []; // New general data listeners
   private initialized = false;
 
-  // Initialize IndexedDB
   async init(): Promise<void> {
       if (this.initialized) return;
 
@@ -160,6 +97,7 @@ class MockStore {
               this.loadFromDB().then(() => {
                   this.initialized = true;
                   resolve();
+                  this.notifyDataChange();
               });
           };
 
@@ -183,38 +121,46 @@ class MockStore {
               }
               resolve();
           };
-          req.onerror = () => {
-              // Ignore error, use initial data
-              resolve();
-          };
+          req.onerror = () => resolve();
       });
   }
 
   private save() {
       if (!this.db) return;
-      // Fire and forget save to DB
       try {
         const tx = this.db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
         store.put(this.data, DATA_KEY);
+        this.notifyDataChange();
       } catch (e) {
           console.error("Failed to save to IndexedDB", e);
       }
   }
 
-  // --- Event System for Logs ---
+  // --- Reactive System ---
+  subscribe(listener: DataListener) {
+      this.dataListeners.push(listener);
+      return () => {
+          this.dataListeners = this.dataListeners.filter(l => l !== listener);
+      };
+  }
+
+  private notifyDataChange() {
+      this.dataListeners.forEach(l => l());
+  }
+
   subscribeToLogs(listener: LogListener) {
-    this.listeners.push(listener);
+    this.logListeners.push(listener);
     return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
+      this.logListeners = this.logListeners.filter(l => l !== listener);
     };
   }
 
   private notifyLog(log: LogEntry) {
-    this.listeners.forEach(l => l(log));
+    this.logListeners.forEach(l => l(log));
   }
 
-  // Projects
+  // --- Accessors ---
   getProjects(): Project[] {
     return [...this.data.projects];
   }
@@ -246,25 +192,19 @@ class MockStore {
 
   deleteProject(id: string) {
     this.data.projects = this.data.projects.filter(p => p.id !== id);
-    
-    // Cascading delete for endpoints and responses
     const endpointsToDelete = this.data.endpoints.filter(e => e.projectId === id);
     const endpointIds = new Set(endpointsToDelete.map(e => e.id));
-    
     this.data.endpoints = this.data.endpoints.filter(e => e.projectId !== id);
     this.data.responses = this.data.responses.filter(r => !endpointIds.has(r.endpointId));
-    
     this.save();
   }
 
-  // Export / Import Project Backup
+  // Export / Import
   exportProject(projectId: string): string {
       const project = this.getProject(projectId);
       if (!project) throw new Error("Project not found");
-      
       const endpoints = this.getEndpoints(projectId);
       const responses = endpoints.flatMap(e => this.getResponses(e.id));
-
       const backup = {
           version: 1,
           type: 'castlemock-lite-backup',
@@ -273,19 +213,14 @@ class MockStore {
           endpoints,
           responses
       };
-
-      return JSON.stringify(backup, null, 2);
+      return JSON.stringify(backup);
   }
 
   importProjectBackup(backupData: any): Project {
       if (backupData.type !== 'castlemock-lite-backup' || !backupData.project) {
           throw new Error("Invalid backup file format");
       }
-
-      // Generate new IDs to avoid collision if importing same project multiple times
-      const oldPrjId = backupData.project.id;
       const newPrjId = generateId();
-      
       const newProject: Project = {
           ...backupData.project,
           id: newPrjId,
@@ -293,8 +228,7 @@ class MockStore {
           status: 'stopped'
       };
 
-      const idMap: Record<string, string> = {}; // Old Endpoint ID -> New Endpoint ID
-
+      const idMap: Record<string, string> = {}; 
       const newEndpoints = (backupData.endpoints || []).map((e: MockEndpoint) => {
           const newId = generateId();
           idMap[e.id] = newId;
@@ -303,15 +237,12 @@ class MockStore {
 
       const newResponses = (backupData.responses || []).map((r: MockResponse) => {
           const newEpId = idMap[r.endpointId];
-          if (!newEpId) return null; // Orphaned response
+          if (!newEpId) return null;
           const newId = generateId();
-          
-          // Fix defaultResponseId linkage
           const parentEp = newEndpoints.find((ep: MockEndpoint) => ep.id === newEpId);
           if (parentEp && parentEp.defaultResponseId === r.id) {
               parentEp.defaultResponseId = newId;
           }
-
           return { ...r, id: newId, endpointId: newEpId };
       }).filter(Boolean) as MockResponse[];
 
@@ -319,7 +250,6 @@ class MockStore {
       this.data.endpoints.push(...newEndpoints);
       this.data.responses.push(...newResponses);
       this.save();
-
       return newProject;
   }
 
@@ -336,9 +266,7 @@ class MockStore {
       path,
       name,
       responseStrategy: 'DEFAULT',
-      docs: {
-        tags: ['Custom']
-      }
+      docs: { tags: ['Custom'] }
     };
     this.data.endpoints.push(newEndpoint);
     this.save();
@@ -373,7 +301,6 @@ class MockStore {
     };
     this.data.responses.push(newResponse);
     
-    // Set as default if it's the first one
     const endpoint = this.data.endpoints.find(e => e.id === endpointId);
     if (endpoint && !endpoint.defaultResponseId) {
       endpoint.defaultResponseId = newResponse.id;
@@ -398,7 +325,7 @@ class MockStore {
     this.save();
   }
 
-  // Mock Engine Logic
+  // Mock Engine
   findMatch(projectId: string, method: string, path: string, requestBody?: string, requestHeaders?: Record<string, string>): { endpoint: MockEndpoint, response: MockResponse, matchedStrategy: string } | null {
     const start = Date.now();
     const project = this.data.projects.find(p => p.id === projectId);
@@ -419,11 +346,7 @@ class MockStore {
         return null;
     }
 
-    const endpoint = this.data.endpoints.find(e => 
-      e.projectId === projectId && 
-      e.method === method && 
-      e.path === path
-    );
+    const endpoint = this.data.endpoints.find(e => e.projectId === projectId && e.method === method && e.path === path);
 
     if (!endpoint) {
         this.notifyLog({
@@ -464,19 +387,12 @@ class MockStore {
         else if (endpoint.responseStrategy === 'QUERY_MATCH' && requestBody) {
             selectedResponse = responses.find(r => {
                 if (!r.matchType || !r.matchExpression) return false;
-
                 if (r.matchType === 'regex') {
-                    try {
-                        const regex = new RegExp(r.matchExpression);
-                        return regex.test(requestBody);
-                    } catch (e) { return false; }
+                    try { return new RegExp(r.matchExpression).test(requestBody); } catch { return false; }
                 }
-                
                 if (r.matchType === 'json') {
                     try {
                         const jsonBody = JSON.parse(requestBody);
-                        
-                        // Parse operator: support ==, !=, or existence (no operator)
                         let operator = '==';
                         if (r.matchExpression.includes('!=')) operator = '!=';
                         else if (r.matchExpression.includes('==')) operator = '==';
@@ -490,16 +406,11 @@ class MockStore {
                             path = r.matchExpression.substring(0, splitIdx).trim();
                             expectedValueStr = r.matchExpression.substring(splitIdx + operator.length).trim();
                         }
-                        
                         const actualValue = getObjectValue(jsonBody, path);
 
-                        if (operator === 'exists') {
-                            return actualValue !== undefined && actualValue !== null;
-                        }
+                        if (operator === 'exists') return actualValue !== undefined && actualValue !== null;
 
-                        // Smart value parsing
                         let expectedValue: any = expectedValueStr;
-                        // remove quotes
                         if (expectedValueStr?.startsWith("'") || expectedValueStr?.startsWith('"')) {
                             expectedValue = expectedValueStr.replace(/['"]/g, '');
                         } else if (expectedValueStr === 'true') expectedValue = true;
@@ -509,19 +420,12 @@ class MockStore {
 
                         if (operator === '==') return actualValue == expectedValue;
                         if (operator === '!=') return actualValue != expectedValue;
-
                         return false;
-                    } catch (e) { return false; }
+                    } catch { return false; }
                 }
-
                 if (r.matchType === 'body_json') {
-                   try {
-                       const subset = JSON.parse(r.matchExpression);
-                       const actual = JSON.parse(requestBody);
-                       return isSubset(subset, actual);
-                   } catch(e) { return false; }
+                   try { return isSubset(JSON.parse(r.matchExpression), JSON.parse(requestBody)); } catch { return false; }
                 }
-
                 return false;
             });
         }
@@ -531,9 +435,7 @@ class MockStore {
             if (endpoint.defaultResponseId) {
                 selectedResponse = responses.find(r => r.id === endpoint.defaultResponseId);
             }
-            if (!selectedResponse) {
-                selectedResponse = responses[0];
-            }
+            if (!selectedResponse) selectedResponse = responses[0];
         }
     }
 
@@ -557,8 +459,11 @@ class MockStore {
 
   importSwagger(projectId: string, swaggerJson: any) {
     const paths = swaggerJson.paths || {};
-    
-    const resolve = (obj: any) => resolveRefs(obj, swaggerJson);
+    const project = this.getProject(projectId);
+    if (project && swaggerJson.components) {
+        project.components = swaggerJson.components;
+    }
+    const resolveForExample = (obj: any) => resolveRefs(obj, swaggerJson);
 
     Object.keys(paths).forEach(path => {
       try {
@@ -568,73 +473,41 @@ class MockStore {
             if (method === 'PARAMETERS') return; 
 
             const details = methods[methodKey];
-            
-            const resolvedParameters = (details.parameters || []).map((p: any) => resolve(p));
-            const resolvedRequestBody = details.requestBody ? resolve(details.requestBody) : undefined;
-            const resolvedResponses = details.responses ? resolve(details.responses) : undefined;
-
             const docs: SwaggerDocs = {
                 summary: details.summary,
                 description: details.description,
                 tags: details.tags || [],
-                parameters: resolvedParameters,
-                requestBody: resolvedRequestBody,
-                responses: resolvedResponses
+                parameters: details.parameters,
+                requestBody: details.requestBody,
+                responses: details.responses
             };
 
-            const newEndpoint: MockEndpoint = {
-              id: generateId(),
-              projectId,
-              method: method as any,
-              path,
-              name: details.summary || details.operationId || `${method} ${path}`,
-              description: details.description,
-              responseStrategy: 'DEFAULT',
-              docs
-            };
-            this.data.endpoints.push(newEndpoint);
+            const newEndpoint = this.createEndpoint(projectId, method as any, path, details.summary || details.operationId || `${method} ${path}`);
+            if (details.description) newEndpoint.description = details.description;
+            newEndpoint.docs = docs;
+            this.updateEndpoint(newEndpoint);
 
-            // Generate Mock Response
             let responseBody = '{}';
-            const successKey = Object.keys(resolvedResponses || {}).find(k => k.startsWith('2'));
-            const successResponse = successKey ? resolvedResponses[successKey] : null;
-
+            const successKey = Object.keys(details.responses || {}).find(k => k.startsWith('2'));
+            let successResponse = successKey ? details.responses[successKey] : null;
+            
             if (successResponse) {
-                const jsonContent = successResponse.content?.['application/json'];
-                
+                successResponse = resolveForExample(successResponse);
+                const jsonContent = successResponse?.content?.['application/json'];
                 if (jsonContent) {
-                    if (jsonContent.example) {
-                        responseBody = JSON.stringify(jsonContent.example, null, 2);
-                    } else if (jsonContent.schema) {
+                    if (jsonContent.example) responseBody = JSON.stringify(jsonContent.example, null, 2);
+                    else if (jsonContent.schema) {
                         try {
-                            const generated = generateExample(jsonContent.schema);
-                            responseBody = JSON.stringify(generated, null, 2);
-                        } catch (genErr) {
-                            console.warn(`Failed to generate example for ${method} ${path}`, genErr);
-                            responseBody = '{}';
-                        }
+                            const resolvedSchema = resolveForExample(jsonContent.schema);
+                            responseBody = JSON.stringify(generateExample(resolvedSchema), null, 2);
+                        } catch (e) { responseBody = '{}'; }
                     }
                 }
             }
-
-            const newResponse: MockResponse = {
-                id: generateId(),
-                endpointId: newEndpoint.id,
-                name: successKey ? `${successKey} Response` : "Default 200",
-                statusCode: successKey ? parseInt(successKey) : 200,
-                headers: { "Content-Type": "application/json" },
-                body: responseBody,
-                delay: 0,
-                delayMode: 'fixed'
-            };
-            this.data.responses.push(newResponse);
-            newEndpoint.defaultResponseId = newResponse.id;
+            this.createResponse(newEndpoint.id, successKey ? `${successKey} Response` : "Default 200", responseBody, successKey ? parseInt(successKey) : 200);
           });
-      } catch (err) {
-          console.error(`Failed to process path: ${path}`, err);
-      }
+      } catch (err) { console.error(`Failed to process path: ${path}`, err); }
     });
-    
     this.save();
   }
 }

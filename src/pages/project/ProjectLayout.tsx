@@ -1,12 +1,11 @@
-
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import EndpointViewer from './EndpointViewer';
 import TestConsole from './TestConsole';
 import LogMonitor from './LogMonitor';
 import { store } from '../../lib/store';
-import { Project, MockEndpoint } from '../../lib/types';
+import { useProject, useEndpoints } from '../../hooks/useStoreData';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { FloatingPanel } from '../../components/ui/FloatingPanel';
@@ -16,13 +15,13 @@ import { PlayCircle, Activity, Upload, Link as LinkIcon, FileJson, Loader2 } fro
 const ProjectLayout = () => {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const [project, setProject] = useState<Project | undefined>();
-  const [endpoints, setEndpoints] = useState<MockEndpoint[]>([]);
+  const project = useProject(projectId);
+  const endpoints = useEndpoints(projectId);
   const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(null);
   
   // Floating Window States
   const [showTestConsole, setShowTestConsole] = useState(true);
-  const [testConsoleMinimized, setTestConsoleMinimized] = useState(true); // Default to minimized
+  const [testConsoleMinimized, setTestConsoleMinimized] = useState(true);
 
   const [showLogs, setShowLogs] = useState(false);
   const [logsMinimized, setLogsMinimized] = useState(false);
@@ -35,22 +34,11 @@ const ProjectLayout = () => {
   
   const [newEndpoint, setNewEndpoint] = useState({ name: '', path: '/', method: 'GET' });
 
-  useEffect(() => {
-    if (!projectId) return;
-    const p = store.getProject(projectId);
-    if (!p) {
-        navigate('/');
-        return;
-    }
-    setProject(p);
-    refreshEndpoints();
-  }, [projectId]);
-
-  const refreshEndpoints = () => {
-     if (projectId) {
-         setEndpoints(store.getEndpoints(projectId));
-     }
-  };
+  // Handle direct navigation to invalid projects
+  if (projectId && project === undefined) {
+      // Still loading or not found. If we implement proper loading state in hook, we can show spinner.
+      // For now, if endpoints load and project is missing, it's 404.
+  }
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -60,11 +48,9 @@ const ProjectLayout = () => {
           try {
               const result = evt.target?.result;
               if (typeof result !== 'string') throw new Error("Failed to read file");
-              
               const json = JSON.parse(result);
               if (projectId) {
                   store.importSwagger(projectId, json);
-                  refreshEndpoints();
                   setIsImportModalOpen(false);
               }
           } catch (err: any) {
@@ -81,27 +67,22 @@ const ProjectLayout = () => {
       try {
           let response;
           try {
-              // Try direct fetch first
               response = await fetch(importUrl);
               if (!response.ok) throw new Error(`Status ${response.status}`);
           } catch (directError) {
-              console.warn("Direct fetch failed, attempting proxy...", directError);
-              // Fallback to CORS proxy if direct fetch fails (likely due to CORS)
               const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(importUrl)}`;
               response = await fetch(proxyUrl);
           }
-          
           if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
           const json = await response.json();
           if (projectId) {
               store.importSwagger(projectId, json);
-              refreshEndpoints();
               setIsImportModalOpen(false);
               setImportUrl('');
           }
       } catch (e: any) {
           console.error("URL Import failed:", e);
-          alert(`Failed to import from URL: ${e.message}. \n\nIf this is a CORS issue and the proxy failed, try downloading the file and uploading it manually.`);
+          alert(`Failed to import: ${e.message}`);
       } finally {
           setIsImporting(false);
       }
@@ -109,9 +90,7 @@ const ProjectLayout = () => {
 
   const handleToggleServer = () => {
       if (project) {
-          const newStatus = project.status === 'running' ? 'stopped' : 'running';
-          store.updateProjectStatus(project.id, newStatus);
-          setProject({ ...project, status: newStatus });
+          store.updateProjectStatus(project.id, project.status === 'running' ? 'stopped' : 'running');
       }
   };
 
@@ -119,14 +98,13 @@ const ProjectLayout = () => {
       if(projectId && newEndpoint.name && newEndpoint.path) {
           const ep = store.createEndpoint(projectId, newEndpoint.method, newEndpoint.path, newEndpoint.name);
           store.createResponse(ep.id, "Success", "{}", 200);
-          refreshEndpoints();
           setSelectedEndpointId(ep.id);
           setIsCreateModalOpen(false);
           setNewEndpoint({ name: '', path: '/', method: 'GET' });
       }
   };
 
-  if (!project) return <div className="p-10 text-white">Loading...</div>;
+  if (!project) return <div className="p-10 text-white flex items-center gap-2"><Loader2 className="animate-spin"/> Loading Project...</div>;
 
   const selectedEndpoint = endpoints.find(e => e.id === selectedEndpointId);
 
@@ -146,9 +124,9 @@ const ProjectLayout = () => {
         {selectedEndpoint ? (
             <>
                 <div className="flex-1 min-w-0 flex flex-col h-[calc(100vh-3.5rem)]">
-                    <EndpointViewer endpoint={selectedEndpoint} onUpdate={refreshEndpoints} />
+                    {/* Using key to force re-mount when ID changes ensures state reset in viewer */}
+                    <EndpointViewer key={selectedEndpoint.id} endpoint={selectedEndpoint} />
                     
-                    {/* Floating Panel Triggers (Bottom Bar) */}
                     <div className="h-10 border-t border-border bg-[#16181d] flex items-center px-4 gap-4 shrink-0">
                         <button 
                             onClick={() => { setShowTestConsole(true); setTestConsoleMinimized(false); }}
@@ -168,7 +146,7 @@ const ProjectLayout = () => {
         ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
                 <h2 className="text-xl font-semibold mb-2">Welcome to {project.name}</h2>
-                <p>Select an endpoint from the sidebar or import a Swagger file to get started.</p>
+                <p>Select an endpoint from the sidebar or import a Swagger file.</p>
                 <Button className="mt-4" onClick={() => setIsImportModalOpen(true)}>
                     <Upload className="w-4 h-4 mr-2" /> Import Swagger
                 </Button>
@@ -176,7 +154,6 @@ const ProjectLayout = () => {
         )}
       </main>
 
-      {/* Floating Windows Layer */}
       {selectedEndpoint && (
         <>
             <FloatingPanel 
@@ -209,7 +186,6 @@ const ProjectLayout = () => {
         </>
       )}
 
-      {/* Modals - (Import/Create) - Kept same as before but rendered here */}
       {isCreateModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-full max-w-md shadow-2xl">
@@ -256,12 +232,10 @@ const ProjectLayout = () => {
           </div>
       )}
 
-      {/* Import Modal */}
       {isImportModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-full max-w-lg shadow-2xl">
                  <h2 className="text-lg font-bold text-white mb-6">Import OpenAPI / Swagger</h2>
-                 
                  <div className="space-y-6">
                      <div className="p-4 border border-dashed border-gray-700 rounded-lg bg-gray-800/30">
                          <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
@@ -274,7 +248,6 @@ const ProjectLayout = () => {
                             className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-white hover:file:bg-blue-600"
                          />
                      </div>
-
                      <div className="relative">
                         <div className="absolute inset-0 flex items-center">
                             <span className="w-full border-t border-gray-800" />
@@ -283,7 +256,6 @@ const ProjectLayout = () => {
                             <span className="bg-gray-900 px-2 text-gray-500">Or import from URL</span>
                         </div>
                      </div>
-
                      <div className="p-4 border border-gray-800 rounded-lg bg-gray-800/30">
                          <h3 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
                              <LinkIcon className="w-4 h-4 mr-2" /> Import from URL
@@ -298,12 +270,8 @@ const ProjectLayout = () => {
                                  {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Import'}
                              </Button>
                          </div>
-                         <p className="text-[10px] text-gray-500 mt-2">
-                             Note: If the server blocks cross-origin requests, a proxy will be used automatically.
-                         </p>
                      </div>
                  </div>
-
                  <div className="flex justify-end mt-6">
                      <Button variant="ghost" onClick={() => setIsImportModalOpen(false)}>Close</Button>
                  </div>

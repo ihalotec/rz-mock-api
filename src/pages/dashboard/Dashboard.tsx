@@ -1,10 +1,8 @@
-
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Box, ArrowRight, Upload, FileJson, Link as LinkIcon, Loader2 } from 'lucide-react';
 import { store } from '../../lib/store';
-import { Project } from '../../lib/types';
+import { useProjects } from '../../hooks/useStoreData';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
@@ -12,7 +10,7 @@ import { Header } from '../../components/layout/Header';
 import { cn } from '../../lib/utils';
 
 const Dashboard = () => {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const projects = useProjects();
   const [isModalOpen, setIsModalOpen] = useState(false);
   
   // Form State
@@ -24,10 +22,6 @@ const Dashboard = () => {
   const [isProcessing, setIsProcessing] = useState(false);
 
   const navigate = useNavigate();
-
-  useEffect(() => {
-    setProjects(store.getProjects());
-  }, []);
 
   // Reset form when modal opens
   useEffect(() => {
@@ -65,13 +59,11 @@ const Dashboard = () => {
           
           // Smart Prefill
           if (json.openapi || json.swagger) {
-              // It's a Swagger file
               setNewProject({
                   name: json.info?.title || file.name.replace('.json', ''),
                   description: json.info?.description || ''
               });
           } else if (json.type === 'castlemock-lite-backup' && json.project) {
-              // It's a Backup file
               setNewProject({
                   name: json.project.name + " (Imported)",
                   description: json.project.description || ''
@@ -94,25 +86,17 @@ const Dashboard = () => {
         let projectId = '';
 
         if (creationMode === 'import' && importedData) {
-            // Check if it's a backup or swagger
             if (importedData.type === 'castlemock-lite-backup') {
                 const importedProject = store.importProjectBackup(importedData);
-                // Allow overriding name/description from form
                 importedProject.name = newProject.name;
                 importedProject.description = newProject.description;
-                // Save specific updates
-                // store.updateProject(importedProject) - not implemented, but create handles persistence. 
-                // Since importProjectBackup saves, we might just need to update it if name changed.
-                // For simplicity, we just use the ID returned.
                 projectId = importedProject.id;
             } else {
-                // Assume Swagger
                 const project = store.createProject(newProject.name, newProject.description);
                 store.importSwagger(project.id, importedData);
                 projectId = project.id;
             }
         } else if (creationMode === 'import' && importUrl) {
-             // Handle URL import at creation time
              const project = store.createProject(newProject.name, newProject.description);
              try {
                 let res = await fetch(importUrl);
@@ -128,12 +112,10 @@ const Dashboard = () => {
              }
              projectId = project.id;
         } else {
-            // Blank
             const project = store.createProject(newProject.name, newProject.description);
             projectId = project.id;
         }
 
-        setProjects(store.getProjects());
         setIsModalOpen(false);
         navigate(`/project/${projectId}`);
     } catch (e) {
@@ -193,14 +175,12 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* Create Modal */}
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
             <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-full max-w-lg shadow-2xl">
               <h2 className="text-xl font-bold mb-6">Create New Project</h2>
               
               <div className="space-y-6">
-                {/* Import Options Toggle */}
                 <div>
                     <label className="text-sm font-medium text-gray-400 mb-2 block">Initial Content</label>
                     <div className="flex gap-2 mb-4">
@@ -228,7 +208,6 @@ const Dashboard = () => {
                         </button>
                     </div>
 
-                    {/* Import Inputs */}
                     {creationMode === 'import' && (
                         <div className="p-4 bg-gray-800/30 rounded-lg border border-gray-800 space-y-4 animate-in fade-in slide-in-from-top-2">
                             <div className="space-y-2">
@@ -266,7 +245,6 @@ const Dashboard = () => {
                     )}
                 </div>
 
-                {/* Basic Info - Moved below so it can be prefilled */}
                 <div className="space-y-4">
                     <div>
                         <label className="text-sm font-medium text-gray-400 mb-1 block">Project Name</label>

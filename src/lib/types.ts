@@ -1,5 +1,3 @@
-
-
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 export type ResponseStrategy = 'DEFAULT' | 'RANDOM' | 'QUERY_MATCH' | 'HEADER_MATCH';
@@ -10,6 +8,7 @@ export interface Project {
   description: string;
   baseUrl: string;
   status: 'running' | 'stopped';
+  components?: any; // Shared Swagger/OpenAPI components definitions
 }
 
 export interface SwaggerDocs {
@@ -42,7 +41,7 @@ export interface MockEndpoint {
   description?: string;
   responseStrategy: ResponseStrategy;
   defaultResponseId?: string;
-  docs?: SwaggerDocs; // New field for detailed documentation
+  docs?: SwaggerDocs; // Stored with $refs to save space
 }
 
 export interface MockResponse {

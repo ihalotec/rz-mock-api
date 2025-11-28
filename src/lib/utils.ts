@@ -24,3 +24,49 @@ export const METHOD_BADGE_COLORS = {
   DELETE: "bg-red-500",
   PATCH: "bg-yellow-500",
 };
+
+// Recursively resolve Swagger $ref pointers
+export function resolveRefs(obj: any, root: any, stack: string[] = []): any {
+    if (obj === null || typeof obj !== 'object') {
+        return obj;
+    }
+
+    if (Array.isArray(obj)) {
+        return obj.map(item => resolveRefs(item, root, stack));
+    }
+
+    // Check if this object is a reference
+    if (obj.$ref && typeof obj.$ref === 'string') {
+        const ref = obj.$ref;
+        if (stack.includes(ref)) {
+             // Circular detection
+             return { type: 'object', description: `[Circular: ${ref.split('/').pop()}]` };
+        }
+        
+        if (ref.startsWith('#/')) {
+            const path = ref.substring(2).split('/');
+            let current = root;
+            for (const segment of path) {
+                current = current?.[segment];
+                if (current === undefined) break;
+            }
+            if (current !== undefined) {
+                // Resolve the referenced object
+                const resolved = resolveRefs(current, root, [...stack, ref]);
+                // Return a new object merging the resolved content
+                if (resolved !== null && typeof resolved === 'object') {
+                    const { $ref, ...rest } = obj;
+                    return { ...resolved, ...rest };
+                }
+                return resolved;
+            }
+        }
+    }
+
+    // Recursively process keys
+    const result: any = {};
+    for (const key in obj) {
+        result[key] = resolveRefs(obj[key], root, stack);
+    }
+    return result;
+}
