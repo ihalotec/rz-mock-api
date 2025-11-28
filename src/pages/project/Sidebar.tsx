@@ -1,8 +1,11 @@
 
+
 import React, { useState, useMemo } from 'react';
-import { Plus, Search, Upload, ChevronDown, ChevronRight, Folder, Tag } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { Plus, Search, Upload, ChevronDown, ChevronRight, Folder, Tag, Download } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { MockEndpoint } from '../../lib/types';
+import { store } from '../../lib/store';
 import { cn, METHOD_COLORS } from '../../lib/utils';
 import { Input } from '../../components/ui/Input';
 
@@ -21,6 +24,7 @@ const Sidebar = ({
   onImportSwagger,
   onCreateEndpoint
 }: SidebarProps) => {
+  const { projectId } = useParams();
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   
@@ -63,14 +67,37 @@ const Sidebar = ({
       setCollapsedGroups(prev => ({ ...prev, [group]: !prev[group] }));
   };
 
+  const handleExport = () => {
+      if (!projectId) return;
+      try {
+          const jsonString = store.exportProject(projectId);
+          const blob = new Blob([jsonString], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `castlemock-backup-${projectId}-${Date.now()}.json`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+      } catch (e) {
+          alert("Failed to export project.");
+          console.error(e);
+      }
+  };
+
   return (
     <div className="w-80 border-r border-border flex flex-col fixed left-0 top-14 bottom-0 z-20 bg-sidebar">
       <div className="p-4 border-b border-border">
          <div className="flex items-center justify-between mb-4">
             <div className="font-bold text-sm tracking-wide text-gray-400 uppercase">Explorer</div>
-             <Button variant="ghost" size="icon" onClick={onImportSwagger} title="Import Swagger / OpenAPI">
-                <Upload className="w-4 h-4" />
-             </Button>
+             <div className="flex gap-1">
+                 <Button variant="ghost" size="icon" onClick={handleExport} title="Export Project Backup" className="h-7 w-7">
+                    <Download className="w-4 h-4" />
+                 </Button>
+                 <Button variant="ghost" size="icon" onClick={onImportSwagger} title="Import Swagger / OpenAPI" className="h-7 w-7">
+                    <Upload className="w-4 h-4" />
+                 </Button>
+             </div>
          </div>
          <div className="relative">
              <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-500" />

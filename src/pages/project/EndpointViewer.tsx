@@ -1,6 +1,6 @@
 
-
 import React, { useEffect, useState } from 'react';
+import { GoogleGenAI } from "@google/genai";
 import { MockEndpoint, MockResponse, ResponseStrategy } from '../../lib/types';
 import { store } from '../../lib/store';
 import { Button } from '../../components/ui/Button';
@@ -8,7 +8,7 @@ import { Textarea } from '../../components/ui/Textarea';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { METHOD_COLORS } from '../../lib/utils';
-import { Save, Clock, Plus, Trash2, Split, Flag, Shuffle, FileText, Settings, X, Tag, Check, Copy, Database, Code } from 'lucide-react';
+import { Save, Clock, Plus, Trash2, Split, Flag, Shuffle, FileText, Settings, X, Tag, Check, Copy, Database, Code, GitBranch, Layers, Sliders, Sparkles, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface EndpointViewerProps {
@@ -52,15 +52,24 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
   const [editResponse, setEditResponse] = useState<MockResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'docs' | 'mock'>('docs');
   
+  // Sub-tabs for Mock Configuration
+  const [mockSubTab, setMockSubTab] = useState<'general' | 'responses' | 'matching'>('general');
+  
   // Local state for headers to ensure stable editing
   const [headerList, setHeaderList] = useState<{id: string, key: string, value: string}[]>([]);
 
   // Local state for Header Match configuration
   const [headerMatchConfig, setHeaderMatchConfig] = useState({ key: '', value: '' });
 
+  // AI Generation State
+  const [showAiPrompt, setShowAiPrompt] = useState(false);
+  const [aiPromptText, setAiPromptText] = useState('');
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+
   useEffect(() => {
     loadData();
     setActiveTab('docs');
+    setMockSubTab('general');
   }, [endpoint]);
 
   useEffect(() => {
@@ -75,6 +84,8 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
         if (found) {
             setEditResponse({ ...found });
             setIsDirty(false);
+            setShowAiPrompt(false);
+            setAiPromptText('');
             
             // Initialize Header Config if strategy is HEADER_MATCH
             if (endpoint.responseStrategy === 'HEADER_MATCH' && found.matchExpression) {
@@ -211,6 +222,57 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
       setIsDirty(true);
   };
 
+  // --- AI Generation Logic ---
+  const handleGenerateAI = async () => {
+      if (!aiPromptText || !process.env.API_KEY) {
+          if (!process.env.API_KEY) alert("API Key not found in environment.");
+          return;
+      }
+      
+      setIsGeneratingAi(true);
+      try {
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+          const isRegex = editResponse?.matchType === 'regex';
+          
+          const prompt = `
+            Act as an expert in JSON Path (JQ style) and Regex.
+            Generate a single match expression string for a REST API mock server.
+            
+            Context:
+            - Endpoint: ${endpoint.method} ${endpoint.path}
+            - Description: ${endpoint.docs?.description || 'N/A'}
+            - Type: ${isRegex ? 'Regex (Javascript flavor)' : 'JSON Path (key == value, key != value, or simple key existence)'}
+            - Request Body Schema: ${JSON.stringify(endpoint.docs?.requestBody || {})}
+            
+            User Requirement: "${aiPromptText}"
+            
+            Output ONLY the raw expression string. Do not include quotes around the whole string, explanations, or markdown code blocks.
+            For JSON Path examples: "user.role == 'admin'", "items[0].id == 123", "token".
+            For Regex examples: "^User.*", "error".
+          `;
+
+          const response = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: prompt
+          });
+
+          const expression = response.text?.trim() || '';
+          // Remove potential markdown code blocks if the model adds them
+          const cleanExpression = expression.replace(/^```\w*\s*/, '').replace(/\s*```$/, '').trim();
+
+          if (cleanExpression) {
+              handleMatchConditionChange('expression', cleanExpression);
+              setShowAiPrompt(false);
+              setAiPromptText('');
+          }
+      } catch (error) {
+          console.error("AI Generation Error", error);
+          alert("Failed to generate expression. Please try again.");
+      } finally {
+          setIsGeneratingAi(false);
+      }
+  };
+
 
   if (!editResponse) return null;
 
@@ -232,7 +294,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                 </div>
             </div>
 
-            {/* --- Tabs Navigation --- */}
+            {/* --- Main Tabs Navigation --- */}
             <div className="flex items-center gap-6 border-b border-gray-800 mb-8">
                 <button 
                     onClick={() => setActiveTab('docs')}
@@ -265,7 +327,6 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
             {/* --- Tab Content: Documentation --- */}
             {activeTab === 'docs' && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in duration-300">
-                    {/* Left Column: Parameters & Request */}
                     <div className="space-y-8">
                         {/* Parameters Table */}
                         {endpoint.docs?.parameters && endpoint.docs.parameters.length > 0 && (
@@ -327,7 +388,6 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                         )}
                     </div>
 
-                    {/* Right Column: Responses */}
                     <div>
                          <h3 className="text-sm font-bold text-white mb-3 uppercase tracking-wider flex items-center">
                             <Database className="w-3 h-3 mr-2" /> Response Examples
@@ -367,322 +427,436 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
             {/* --- Tab Content: Mock Configuration --- */}
             {activeTab === 'mock' && (
                 <div className="animate-in fade-in duration-300">
-                     
-                     {/* Strategy Control */}
-                    <div className="bg-[#16181d] border border-gray-800 rounded-lg p-4 mb-8 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 bg-gray-800 rounded-md text-gray-300">
-                                {endpoint.responseStrategy === 'RANDOM' && <Shuffle className="w-5 h-5" />}
-                                {endpoint.responseStrategy === 'QUERY_MATCH' && <Split className="w-5 h-5" />}
-                                {endpoint.responseStrategy === 'HEADER_MATCH' && <Tag className="w-5 h-5" />}
-                                {endpoint.responseStrategy === 'DEFAULT' && <Flag className="w-5 h-5" />}
-                            </div>
-                            <div>
-                                <div className="text-sm font-medium text-gray-200">Response Strategy</div>
-                                <div className="text-xs text-gray-500">How the mock server determines which response to send.</div>
-                            </div>
-                        </div>
-                        <select 
-                            value={endpoint.responseStrategy} 
-                            onChange={handleStrategyChange}
-                            className="bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-md px-3 py-2 outline-none focus:ring-1 focus:ring-primary"
+                    
+                    {/* Sub-Tabs for Mock Configuration */}
+                    <div className="flex items-center gap-2 mb-6 border-b border-gray-800 pb-1">
+                        <button 
+                            onClick={() => setMockSubTab('general')}
+                            className={cn(
+                                "flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-t-md transition-colors", 
+                                mockSubTab === 'general' ? "bg-[#16181d] text-white border-t border-x border-gray-800" : "text-gray-500 hover:text-gray-300"
+                            )}
                         >
-                            <option value="DEFAULT">Default (Fixed)</option>
-                            <option value="RANDOM">Random</option>
-                            <option value="QUERY_MATCH">Match Request (Conditional)</option>
-                            <option value="HEADER_MATCH">Header Match</option>
-                        </select>
+                            <Sliders className="w-3 h-3" /> General Settings
+                        </button>
+                        <button 
+                            onClick={() => setMockSubTab('responses')}
+                            className={cn(
+                                "flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-t-md transition-colors", 
+                                mockSubTab === 'responses' ? "bg-[#16181d] text-white border-t border-x border-gray-800" : "text-gray-500 hover:text-gray-300"
+                            )}
+                        >
+                            <Layers className="w-3 h-3" /> Responses
+                        </button>
+                        <button 
+                            onClick={() => setMockSubTab('matching')}
+                            className={cn(
+                                "flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-t-md transition-colors", 
+                                mockSubTab === 'matching' ? "bg-[#16181d] text-white border-t border-x border-gray-800" : "text-gray-500 hover:text-gray-300"
+                            )}
+                        >
+                            <GitBranch className="w-3 h-3" /> Advanced Matching
+                        </button>
                     </div>
 
-                    <div className="flex gap-6 items-start min-h-[600px]">
-                        {/* Responses List Sidebar */}
-                        <div className="w-64 shrink-0 flex flex-col h-full border border-gray-800 rounded-lg bg-[#0f1117] overflow-hidden">
-                            <div className="p-3 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
-                                <span className="text-xs font-semibold text-gray-400 uppercase">Mock Responses</span>
-                                <button onClick={handleCreateResponse} className="text-gray-400 hover:text-white">
-                                    <Plus className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar max-h-[700px]">
-                                {responses.map(res => (
-                                    <div 
-                                        key={res.id}
-                                        onClick={() => setSelectedResponseId(res.id)}
-                                        className={cn(
-                                            "group flex flex-col p-2 rounded-md text-sm border cursor-pointer transition-all",
-                                            selectedResponseId === res.id 
-                                                ? "bg-gray-800 border-gray-600" 
-                                                : "bg-transparent border-transparent hover:bg-gray-900 hover:border-gray-800"
-                                        )}
-                                    >
-                                        <div className="flex justify-between items-start mb-1">
-                                            <div className="font-medium text-gray-300 truncate pr-2">{res.name}</div>
-                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                {endpoint.responseStrategy === 'DEFAULT' && endpoint.defaultResponseId !== res.id && (
-                                                    <button 
-                                                        title="Set as Default" 
-                                                        onClick={(e) => handleSetDefault(res.id, e)}
-                                                        className="text-gray-500 hover:text-primary"
-                                                    >
-                                                        <Flag className="w-3 h-3" />
-                                                    </button>
-                                                )}
-                                                {responses.length > 1 && (
-                                                    <button 
-                                                        onClick={(e) => handleDeleteResponse(res.id, e)}
-                                                        className="text-gray-500 hover:text-red-400"
-                                                    >
-                                                        <Trash2 className="w-3 h-3" />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <Badge variant={res.statusCode < 300 ? 'success' : 'danger'} className="px-1.5 py-0 text-[10px]">
-                                                {res.statusCode}
-                                            </Badge>
-                                            {endpoint.defaultResponseId === res.id && (
-                                                <Badge variant="default" className="px-1.5 py-0 text-[10px] bg-blue-900/30 text-blue-400 border-blue-900">
-                                                    Default
-                                                </Badge>
-                                            )}
-                                            {(endpoint.responseStrategy === 'QUERY_MATCH' || endpoint.responseStrategy === 'HEADER_MATCH') && res.matchType && (
-                                                <span className="text-[10px] text-gray-500 bg-gray-800 px-1 rounded">
-                                                    {res.matchType === 'header' ? 'Header' : res.matchType}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Editor */}
-                        <div className="flex-1 flex flex-col h-full overflow-hidden border border-gray-800 rounded-lg bg-[#16181d]">
-                            <div className="border-b border-gray-800 p-4 flex justify-between items-center bg-gray-900/50">
-                                <Input 
-                                    value={editResponse.name}
-                                    onChange={(e) => handleEditChange('name', e.target.value)}
-                                    className="w-64 h-8 bg-transparent border-transparent hover:border-gray-700 focus:bg-gray-900 focus:border-gray-600 font-semibold"
-                                />
-                                <div className="flex items-center gap-3">
-                                    {isDirty && <span className="text-xs text-yellow-500 italic">Unsaved changes</span>}
-                                    <Button size="sm" onClick={handleSave} disabled={!isDirty}>
-                                        <Save className="w-4 h-4 mr-2" />
-                                        Save
-                                    </Button>
+                    {/* --- Sub-Tab: General Settings --- */}
+                    {mockSubTab === 'general' && (
+                        <div className="bg-[#16181d] border border-gray-800 rounded-lg p-6 max-w-2xl">
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="p-3 bg-gray-800 rounded-lg text-gray-300">
+                                    {endpoint.responseStrategy === 'RANDOM' && <Shuffle className="w-6 h-6" />}
+                                    {endpoint.responseStrategy === 'QUERY_MATCH' && <Split className="w-6 h-6" />}
+                                    {endpoint.responseStrategy === 'HEADER_MATCH' && <Tag className="w-6 h-6" />}
+                                    {endpoint.responseStrategy === 'DEFAULT' && <Flag className="w-6 h-6" />}
                                 </div>
-                            </div>
-
-                            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                                {/* Conditional Logic UI - Query Match */}
-                                {endpoint.responseStrategy === 'QUERY_MATCH' && (
-                                    <div className="mb-6 p-4 bg-gray-900/40 rounded-lg border border-gray-800">
-                                        <h3 className="text-xs font-semibold text-primary uppercase mb-3 flex items-center">
-                                            <Split className="w-3 h-3 mr-2" /> Match Condition
-                                        </h3>
-                                        <div className="flex gap-3">
-                                            <div className="w-1/3">
-                                                <select 
-                                                    className="w-full h-9 rounded-md border border-gray-700 bg-gray-900 px-3 text-sm text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-600"
-                                                    value={editResponse.matchType || ''}
-                                                    onChange={(e) => handleMatchConditionChange('type', e.target.value)}
-                                                >
-                                                    <option value="">No Condition (Fallback)</option>
-                                                    <option value="json">JSON Path (Key == Value)</option>
-                                                    <option value="body_json">JSON Body Subset (Partial Match)</option>
-                                                    <option value="regex">Regex Body Match</option>
-                                                </select>
-                                            </div>
-                                            <div className="flex-1">
-                                                {editResponse.matchType === 'json' && (
-                                                    <Input 
-                                                        placeholder="e.g. user.role == 'admin', items[0].id != 5, or just 'isActive'" 
-                                                        className="h-9" 
-                                                        value={editResponse.matchExpression || ''}
-                                                        onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
-                                                    />
-                                                )}
-                                                {editResponse.matchType === 'regex' && (
-                                                    <Input 
-                                                        placeholder="e.g. ^User.*123" 
-                                                        className="h-9 font-mono"
-                                                        value={editResponse.matchExpression || ''}
-                                                        onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
-                                                    />
-                                                )}
-                                                {editResponse.matchType === 'body_json' && (
-                                                    <div className="flex flex-col gap-1">
-                                                        <Textarea 
-                                                            placeholder='{ "key": "value" }' 
-                                                            className="h-24 font-mono text-xs"
-                                                            value={editResponse.matchExpression || ''}
-                                                            onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
-                                                        />
-                                                        <span className="text-[10px] text-gray-500">Response triggers if request body contains this JSON structure.</span>
-                                                    </div>
-                                                )}
-                                                {(!editResponse.matchType) && (
-                                                    <div className="h-9 flex items-center text-xs text-gray-500 italic">This response will be used if no other conditions match.</div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Conditional Logic UI - Header Match */}
-                                {endpoint.responseStrategy === 'HEADER_MATCH' && (
-                                    <div className="mb-6 p-4 bg-gray-900/40 rounded-lg border border-gray-800">
-                                        <h3 className="text-xs font-semibold text-primary uppercase mb-3 flex items-center">
-                                            <Tag className="w-3 h-3 mr-2" /> Header Match Condition
-                                        </h3>
-                                        <div className="flex gap-3">
-                                            <div className="flex-1">
-                                                <label className="text-[10px] text-gray-500 mb-1 block uppercase">Header Name</label>
-                                                <Input 
-                                                    placeholder="e.g. X-Api-Key" 
-                                                    className="h-9" 
-                                                    value={headerMatchConfig.key}
-                                                    onChange={(e) => handleHeaderMatchChange('key', e.target.value)}
-                                                />
-                                            </div>
-                                            <div className="flex-1">
-                                                <label className="text-[10px] text-gray-500 mb-1 block uppercase">Expected Value</label>
-                                                <Input 
-                                                    placeholder="e.g. secret-token-123" 
-                                                    className="h-9" 
-                                                    value={headerMatchConfig.value}
-                                                    onChange={(e) => handleHeaderMatchChange('value', e.target.value)}
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="mt-2 text-[10px] text-gray-500">
-                                            This response will trigger if the request header <strong>{headerMatchConfig.key || '...'}</strong> equals <strong>{headerMatchConfig.value || '...'}</strong>.
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="grid grid-cols-2 gap-4 mb-6">
-                                    <div>
-                                        <label className="text-xs text-gray-500 mb-1 block">Status Code</label>
-                                        <Input 
-                                            type="number" 
-                                            value={editResponse.statusCode} 
-                                            onChange={(e) => handleEditChange('statusCode', parseInt(e.target.value))}
-                                            className="font-mono bg-gray-900/50"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs text-gray-500 mb-1 block">Latency (ms)</label>
-                                        <div className="flex gap-2">
-                                            <select 
-                                                className="w-24 rounded-md border border-gray-700 bg-gray-900 px-2 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-600"
-                                                value={editResponse.delayMode || 'fixed'}
-                                                onChange={(e) => handleEditChange('delayMode', e.target.value)}
-                                            >
-                                                <option value="fixed">Fixed</option>
-                                                <option value="random">Random</option>
-                                            </select>
-                                            
-                                            {editResponse.delayMode === 'random' ? (
-                                                <div className="flex items-center gap-2 flex-1">
-                                                    <Input 
-                                                        type="number"
-                                                        min="0"
-                                                        placeholder="Min"
-                                                        value={editResponse.delayMin === undefined ? 0 : editResponse.delayMin}
-                                                        onChange={(e) => handleEditChange('delayMin', parseInt(e.target.value) || 0)}
-                                                        className="font-mono bg-gray-900/50 text-xs"
-                                                    />
-                                                    <span className="text-gray-500">-</span>
-                                                    <Input 
-                                                        type="number"
-                                                        min="0"
-                                                        placeholder="Max"
-                                                        value={editResponse.delayMax === undefined ? 0 : editResponse.delayMax}
-                                                        onChange={(e) => handleEditChange('delayMax', parseInt(e.target.value) || 0)}
-                                                        className="font-mono bg-gray-900/50 text-xs"
-                                                    />
-                                                </div>
-                                            ) : (
-                                                <div className="relative flex-1">
-                                                    <Clock className="w-4 h-4 absolute left-3 top-2.5 text-gray-500" />
-                                                    <Input 
-                                                        type="number"
-                                                        min="0"
-                                                        placeholder="0"
-                                                        value={editResponse.delay === 0 ? '' : editResponse.delay}
-                                                        onChange={(e) => {
-                                                            const val = parseInt(e.target.value);
-                                                            handleEditChange('delay', isNaN(val) ? 0 : val);
-                                                        }}
-                                                        className="pl-9 font-mono bg-gray-900/50"
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Response Headers Section */}
-                                <div className="mb-6">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <label className="text-xs text-gray-500 flex items-center">
-                                            <Tag className="w-3 h-3 mr-1" /> Response Headers
-                                        </label>
-                                        <button 
-                                            onClick={addHeaderItem}
-                                            className="text-xs text-primary hover:text-white flex items-center"
-                                        >
-                                            <Plus className="w-3 h-3 mr-1" /> Add Header
-                                        </button>
-                                    </div>
-                                    
-                                    <div className="bg-gray-900/30 border border-gray-800 rounded-lg p-2 space-y-2">
-                                        {headerList.length > 0 ? (
-                                            headerList.map((item) => (
-                                                <div key={item.id} className="flex gap-2 items-center group">
-                                                    <Input 
-                                                        className="flex-1 h-8 text-xs font-mono bg-gray-900 border-gray-700"
-                                                        placeholder="Key"
-                                                        value={item.key}
-                                                        onChange={(e) => handleHeaderListChange(item.id, 'key', e.target.value)}
-                                                    />
-                                                    <Input 
-                                                        className="flex-1 h-8 text-xs font-mono bg-gray-900 border-gray-700"
-                                                        placeholder="Value"
-                                                        value={item.value}
-                                                        onChange={(e) => handleHeaderListChange(item.id, 'value', e.target.value)}
-                                                    />
-                                                    <button 
-                                                        onClick={() => removeHeaderItem(item.id)}
-                                                        className="p-1 text-gray-600 hover:text-red-400 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                                                        title="Remove Header"
-                                                    >
-                                                        <X className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <div className="text-center py-2 text-xs text-gray-600 italic">
-                                                No custom headers defined.
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-
                                 <div>
-                                    <label className="text-xs text-gray-500 mb-1 block">Response Body (JSON)</label>
-                                    <Textarea 
-                                        className="min-h-[300px] font-mono text-sm leading-6 resize-y bg-[#0d0e12]" 
-                                        value={editResponse.body}
-                                        onChange={(e) => handleEditChange('body', e.target.value)}
-                                        spellCheck={false}
-                                    />
+                                    <h3 className="text-base font-semibold text-white mb-1">Response Strategy</h3>
+                                    <p className="text-xs text-gray-400">Determines how the mock server selects a response when this endpoint is called.</p>
+                                </div>
+                            </div>
+                            
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-xs text-gray-500 mb-1 block uppercase font-semibold">Strategy Type</label>
+                                    <select 
+                                        value={endpoint.responseStrategy} 
+                                        onChange={handleStrategyChange}
+                                        className="w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded-md px-3 py-2.5 outline-none focus:ring-1 focus:ring-primary"
+                                    >
+                                        <option value="DEFAULT">Default (Fixed)</option>
+                                        <option value="RANDOM">Random</option>
+                                        <option value="QUERY_MATCH">Match Request (Conditional)</option>
+                                        <option value="HEADER_MATCH">Header Match</option>
+                                    </select>
+                                </div>
+                                
+                                <div className="p-4 bg-gray-900/50 rounded-md border border-gray-800 text-xs text-gray-400">
+                                    {endpoint.responseStrategy === 'DEFAULT' && "The server will always return the response marked as 'Default'. Use this for simple mocking."}
+                                    {endpoint.responseStrategy === 'RANDOM' && "The server will randomly pick one of the available responses for each request. Useful for chaos engineering."}
+                                    {endpoint.responseStrategy === 'QUERY_MATCH' && "The server inspects the Request Body using JSON Path, Regex, or Subset matching to decide which response to serve."}
+                                    {endpoint.responseStrategy === 'HEADER_MATCH' && "The server inspects Request Headers to find a match. Useful for testing auth states or feature flags."}
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    )}
+
+                    {/* --- Sub-Tabs: Responses & Matching (Shared Layout) --- */}
+                    {(mockSubTab === 'responses' || mockSubTab === 'matching') && (
+                        <div className="flex gap-6 items-start min-h-[600px]">
+                            {/* Responses List Sidebar */}
+                            <div className="w-64 shrink-0 flex flex-col h-full border border-gray-800 rounded-lg bg-[#0f1117] overflow-hidden">
+                                <div className="p-3 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
+                                    <span className="text-xs font-semibold text-gray-400 uppercase">Mock Responses</span>
+                                    <button onClick={handleCreateResponse} className="text-gray-400 hover:text-white" title="Add Response">
+                                        <Plus className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar max-h-[700px]">
+                                    {responses.map(res => (
+                                        <div 
+                                            key={res.id}
+                                            onClick={() => setSelectedResponseId(res.id)}
+                                            className={cn(
+                                                "group flex flex-col p-2 rounded-md text-sm border cursor-pointer transition-all",
+                                                selectedResponseId === res.id 
+                                                    ? "bg-gray-800 border-gray-600" 
+                                                    : "bg-transparent border-transparent hover:bg-gray-900 hover:border-gray-800"
+                                            )}
+                                        >
+                                            <div className="flex justify-between items-start mb-1">
+                                                <div className="font-medium text-gray-300 truncate pr-2">{res.name}</div>
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    {endpoint.responseStrategy === 'DEFAULT' && endpoint.defaultResponseId !== res.id && (
+                                                        <button 
+                                                            title="Set as Default" 
+                                                            onClick={(e) => handleSetDefault(res.id, e)}
+                                                            className="text-gray-500 hover:text-primary"
+                                                        >
+                                                            <Flag className="w-3 h-3" />
+                                                        </button>
+                                                    )}
+                                                    {responses.length > 1 && (
+                                                        <button 
+                                                            onClick={(e) => handleDeleteResponse(res.id, e)}
+                                                            className="text-gray-500 hover:text-red-400"
+                                                        >
+                                                            <Trash2 className="w-3 h-3" />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant={res.statusCode < 300 ? 'success' : 'danger'} className="px-1.5 py-0 text-[10px]">
+                                                    {res.statusCode}
+                                                </Badge>
+                                                {endpoint.defaultResponseId === res.id && (
+                                                    <Badge variant="default" className="px-1.5 py-0 text-[10px] bg-blue-900/30 text-blue-400 border-blue-900">
+                                                        Default
+                                                    </Badge>
+                                                )}
+                                                {(endpoint.responseStrategy === 'QUERY_MATCH' || endpoint.responseStrategy === 'HEADER_MATCH') && res.matchType && (
+                                                    <span className="text-[10px] text-gray-500 bg-gray-800 px-1 rounded">
+                                                        {res.matchType === 'header' ? 'Header' : 'Match'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Editor Panel */}
+                            <div className="flex-1 flex flex-col h-full overflow-hidden border border-gray-800 rounded-lg bg-[#16181d]">
+                                <div className="border-b border-gray-800 p-4 flex justify-between items-center bg-gray-900/50">
+                                    <Input 
+                                        value={editResponse.name}
+                                        onChange={(e) => handleEditChange('name', e.target.value)}
+                                        className="w-64 h-8 bg-transparent border-transparent hover:border-gray-700 focus:bg-gray-900 focus:border-gray-600 font-semibold"
+                                        placeholder="Response Name"
+                                    />
+                                    <div className="flex items-center gap-3">
+                                        {isDirty && <span className="text-xs text-yellow-500 italic">Unsaved changes</span>}
+                                        <Button size="sm" onClick={handleSave} disabled={!isDirty}>
+                                            <Save className="w-4 h-4 mr-2" />
+                                            Save
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                    
+                                    {/* --- RESPONSES EDITOR --- */}
+                                    {mockSubTab === 'responses' && (
+                                        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                                            <div className="grid grid-cols-2 gap-4 mb-6">
+                                                <div>
+                                                    <label className="text-xs text-gray-500 mb-1 block">Status Code</label>
+                                                    <Input 
+                                                        type="number" 
+                                                        value={editResponse.statusCode} 
+                                                        onChange={(e) => handleEditChange('statusCode', parseInt(e.target.value))}
+                                                        className="font-mono bg-gray-900/50"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-gray-500 mb-1 block">Latency (ms)</label>
+                                                    <div className="flex gap-2">
+                                                        <select 
+                                                            className="w-24 rounded-md border border-gray-700 bg-gray-900 px-2 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-600"
+                                                            value={editResponse.delayMode || 'fixed'}
+                                                            onChange={(e) => handleEditChange('delayMode', e.target.value)}
+                                                        >
+                                                            <option value="fixed">Fixed</option>
+                                                            <option value="random">Random</option>
+                                                        </select>
+                                                        
+                                                        {editResponse.delayMode === 'random' ? (
+                                                            <div className="flex items-center gap-2 flex-1">
+                                                                <Input 
+                                                                    type="number"
+                                                                    min="0"
+                                                                    placeholder="Min"
+                                                                    value={editResponse.delayMin === undefined ? 0 : editResponse.delayMin}
+                                                                    onChange={(e) => handleEditChange('delayMin', parseInt(e.target.value) || 0)}
+                                                                    className="font-mono bg-gray-900/50 text-xs"
+                                                                />
+                                                                <span className="text-gray-500">-</span>
+                                                                <Input 
+                                                                    type="number"
+                                                                    min="0"
+                                                                    placeholder="Max"
+                                                                    value={editResponse.delayMax === undefined ? 0 : editResponse.delayMax}
+                                                                    onChange={(e) => handleEditChange('delayMax', parseInt(e.target.value) || 0)}
+                                                                    className="font-mono bg-gray-900/50 text-xs"
+                                                                />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="relative flex-1">
+                                                                <Clock className="w-4 h-4 absolute left-3 top-2.5 text-gray-500" />
+                                                                <Input 
+                                                                    type="number"
+                                                                    min="0"
+                                                                    placeholder="0"
+                                                                    value={editResponse.delay === 0 ? '' : editResponse.delay}
+                                                                    onChange={(e) => {
+                                                                        const val = parseInt(e.target.value);
+                                                                        handleEditChange('delay', isNaN(val) ? 0 : val);
+                                                                    }}
+                                                                    className="pl-9 font-mono bg-gray-900/50"
+                                                                />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Response Headers Section */}
+                                            <div className="mb-6">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <label className="text-xs text-gray-500 flex items-center">
+                                                        <Tag className="w-3 h-3 mr-1" /> Response Headers
+                                                    </label>
+                                                    <button 
+                                                        onClick={addHeaderItem}
+                                                        className="text-xs text-primary hover:text-white flex items-center"
+                                                    >
+                                                        <Plus className="w-3 h-3 mr-1" /> Add Header
+                                                    </button>
+                                                </div>
+                                                
+                                                <div className="bg-gray-900/30 border border-gray-800 rounded-lg p-2 space-y-2">
+                                                    {headerList.length > 0 ? (
+                                                        headerList.map((item) => (
+                                                            <div key={item.id} className="flex gap-2 items-center group">
+                                                                <Input 
+                                                                    className="flex-1 h-8 text-xs font-mono bg-gray-900 border-gray-700"
+                                                                    placeholder="Key"
+                                                                    value={item.key}
+                                                                    onChange={(e) => handleHeaderListChange(item.id, 'key', e.target.value)}
+                                                                />
+                                                                <Input 
+                                                                    className="flex-1 h-8 text-xs font-mono bg-gray-900 border-gray-700"
+                                                                    placeholder="Value"
+                                                                    value={item.value}
+                                                                    onChange={(e) => handleHeaderListChange(item.id, 'value', e.target.value)}
+                                                                />
+                                                                <button 
+                                                                    onClick={() => removeHeaderItem(item.id)}
+                                                                    className="p-1 text-gray-600 hover:text-red-400 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                                                    title="Remove Header"
+                                                                >
+                                                                    <X className="w-4 h-4" />
+                                                                </button>
+                                                            </div>
+                                                        ))
+                                                    ) : (
+                                                        <div className="text-center py-2 text-xs text-gray-600 italic">
+                                                            No custom headers defined.
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label className="text-xs text-gray-500 mb-1 block">Response Body (JSON)</label>
+                                                <Textarea 
+                                                    className="min-h-[300px] font-mono text-sm leading-6 resize-y bg-[#0d0e12]" 
+                                                    value={editResponse.body}
+                                                    onChange={(e) => handleEditChange('body', e.target.value)}
+                                                    spellCheck={false}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* --- MATCHING EDITOR --- */}
+                                    {mockSubTab === 'matching' && (
+                                        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                                            {/* Strategy Warning */}
+                                            {endpoint.responseStrategy !== 'QUERY_MATCH' && endpoint.responseStrategy !== 'HEADER_MATCH' && (
+                                                <div className="p-6 bg-gray-900/50 border border-dashed border-gray-800 rounded-lg text-center mb-6">
+                                                    <GitBranch className="w-8 h-8 text-gray-600 mx-auto mb-3" />
+                                                    <h4 className="text-gray-300 font-medium text-sm mb-1">Matching is Disabled</h4>
+                                                    <p className="text-xs text-gray-500 mb-4 max-w-xs mx-auto">
+                                                        The current strategy <strong>{endpoint.responseStrategy === 'DEFAULT' ? 'Default' : 'Random'}</strong> does not use conditional logic.
+                                                    </p>
+                                                    <Button size="sm" variant="outline" onClick={() => setMockSubTab('general')}>
+                                                        Change Strategy
+                                                    </Button>
+                                                </div>
+                                            )}
+
+                                            {/* Matching UI - Query Match */}
+                                            {endpoint.responseStrategy === 'QUERY_MATCH' && (
+                                                <div className="mb-6 p-4 bg-gray-900/40 rounded-lg border border-gray-800">
+                                                    <h3 className="text-xs font-semibold text-primary uppercase mb-3 flex items-center justify-between">
+                                                        <div className="flex items-center">
+                                                            <Split className="w-3 h-3 mr-2" /> Match Condition
+                                                        </div>
+                                                        {(editResponse.matchType === 'json' || editResponse.matchType === 'regex') && (
+                                                            <button 
+                                                                onClick={() => setShowAiPrompt(!showAiPrompt)} 
+                                                                className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300 border border-purple-500/30 bg-purple-500/10 px-2 py-1 rounded transition-all"
+                                                            >
+                                                                <Sparkles className="w-3 h-3" />
+                                                                Ask AI
+                                                            </button>
+                                                        )}
+                                                    </h3>
+
+                                                    {/* AI Prompt Input */}
+                                                    {showAiPrompt && (editResponse.matchType === 'json' || editResponse.matchType === 'regex') && (
+                                                        <div className="mb-4 p-3 bg-purple-900/10 border border-purple-500/20 rounded-md animate-in slide-in-from-top-2">
+                                                            <label className="text-[10px] text-purple-300 mb-1 block">Describe your matching rule (e.g. "Match if user role is admin")</label>
+                                                            <div className="flex gap-2">
+                                                                <Input 
+                                                                    value={aiPromptText}
+                                                                    onChange={(e) => setAiPromptText(e.target.value)}
+                                                                    className="h-8 text-xs bg-gray-900 border-purple-500/30 focus:border-purple-500/50"
+                                                                    placeholder="Type here..."
+                                                                    onKeyDown={(e) => e.key === 'Enter' && handleGenerateAI()}
+                                                                />
+                                                                <Button 
+                                                                    size="sm" 
+                                                                    onClick={handleGenerateAI}
+                                                                    disabled={!aiPromptText || isGeneratingAi}
+                                                                    className="h-8 px-3 bg-purple-600 hover:bg-purple-500 text-white border-transparent"
+                                                                >
+                                                                    {isGeneratingAi ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Generate'}
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    <div className="flex gap-3">
+                                                        <div className="w-1/3">
+                                                            <select 
+                                                                className="w-full h-9 rounded-md border border-gray-700 bg-gray-900 px-3 text-sm text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-600"
+                                                                value={editResponse.matchType || ''}
+                                                                onChange={(e) => handleMatchConditionChange('type', e.target.value)}
+                                                            >
+                                                                <option value="">No Condition (Fallback)</option>
+                                                                <option value="json">JSON Path (Key == Value)</option>
+                                                                <option value="body_json">JSON Body Subset (Partial Match)</option>
+                                                                <option value="regex">Regex Body Match</option>
+                                                            </select>
+                                                        </div>
+                                                        <div className="flex-1">
+                                                            {editResponse.matchType === 'json' && (
+                                                                <div className="flex flex-col gap-1">
+                                                                    <Input 
+                                                                        placeholder="e.g. user.role == 'admin', items[0].id != 5, or just 'isActive'" 
+                                                                        className="h-9" 
+                                                                        value={editResponse.matchExpression || ''}
+                                                                        onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
+                                                                    />
+                                                                    <span className="text-[10px] text-gray-500">Supports dot notation, array index, ==, !=, or existence check.</span>
+                                                                </div>
+                                                            )}
+                                                            {editResponse.matchType === 'regex' && (
+                                                                <Input 
+                                                                    placeholder="e.g. ^User.*123" 
+                                                                    className="h-9 font-mono"
+                                                                    value={editResponse.matchExpression || ''}
+                                                                    onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
+                                                                />
+                                                            )}
+                                                            {editResponse.matchType === 'body_json' && (
+                                                                <div className="flex flex-col gap-1">
+                                                                    <Textarea 
+                                                                        placeholder='{ "key": "value" }' 
+                                                                        className="h-40 font-mono text-xs"
+                                                                        value={editResponse.matchExpression || ''}
+                                                                        onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
+                                                                    />
+                                                                    <span className="text-[10px] text-gray-500">Response triggers if request body contains this JSON structure.</span>
+                                                                </div>
+                                                            )}
+                                                            {(!editResponse.matchType) && (
+                                                                <div className="h-9 flex items-center text-xs text-gray-500 italic">This response will be used if no other conditions match.</div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Matching UI - Header Match */}
+                                            {endpoint.responseStrategy === 'HEADER_MATCH' && (
+                                                <div className="mb-6 p-4 bg-gray-900/40 rounded-lg border border-gray-800">
+                                                    <h3 className="text-xs font-semibold text-primary uppercase mb-3 flex items-center">
+                                                        <Tag className="w-3 h-3 mr-2" /> Header Match Condition
+                                                    </h3>
+                                                    <div className="flex gap-3">
+                                                        <div className="flex-1">
+                                                            <label className="text-[10px] text-gray-500 mb-1 block uppercase">Header Name</label>
+                                                            <Input 
+                                                                placeholder="e.g. X-Api-Key" 
+                                                                className="h-9" 
+                                                                value={headerMatchConfig.key}
+                                                                onChange={(e) => handleHeaderMatchChange('key', e.target.value)}
+                                                            />
+                                                        </div>
+                                                        <div className="flex-1">
+                                                            <label className="text-[10px] text-gray-500 mb-1 block uppercase">Expected Value</label>
+                                                            <Input 
+                                                                placeholder="e.g. secret-token-123" 
+                                                                className="h-9" 
+                                                                value={headerMatchConfig.value}
+                                                                onChange={(e) => handleHeaderMatchChange('value', e.target.value)}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-2 text-[10px] text-gray-500">
+                                                        This response will trigger if the request header <strong>{headerMatchConfig.key || '...'}</strong> equals <strong>{headerMatchConfig.value || '...'}</strong>.
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

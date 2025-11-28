@@ -22,7 +22,7 @@ const ProjectLayout = () => {
   
   // Floating Window States
   const [showTestConsole, setShowTestConsole] = useState(true);
-  const [testConsoleMinimized, setTestConsoleMinimized] = useState(false);
+  const [testConsoleMinimized, setTestConsoleMinimized] = useState(true); // Default to minimized
 
   const [showLogs, setShowLogs] = useState(false);
   const [logsMinimized, setLogsMinimized] = useState(false);

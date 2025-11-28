@@ -37,18 +37,7 @@ function isSubset(subset: any, actual: any): boolean {
 
     if (Array.isArray(subset)) {
         if (!Array.isArray(actual)) return false;
-        // For arrays, we check if every item in subset exists in actual (order doesn't matter for this simple mock impl, 
-        // or strictly position based? Let's do loose inclusion for mocking convenience)
-        // Actually, strict structure matching is usually better for APIs:
-        // Let's assume standard subset: properties in subset must exist in actual with same values.
-        
-        // However, for arrays, simpler is: subset[i] matches actual[i] ? 
-        // Or subset is contained in actual? 
-        // Let's do: Every property in subset object must match property in actual object.
         for (let i = 0; i < subset.length; i++) {
-             // For exact array matching or partial? Let's go with strict index matching for now to be safe
-             // or maybe we just check if actual contains it.
-             // Let's stick to object property subset logic. 
              if (!isSubset(subset[i], actual[i])) return false;
         }
         return true;
@@ -86,7 +75,6 @@ function resolveRefs(obj: any, root: any, stack: string[] = []): any {
                 // Resolve the referenced object
                 const resolved = resolveRefs(current, root, [...stack, ref]);
                 // Return a new object merging the resolved content
-                // If resolved is not an object (e.g. primitive), don't try to spread it
                 if (resolved !== null && typeof resolved === 'object') {
                     const { $ref, ...rest } = obj;
                     return { ...resolved, ...rest };
@@ -254,6 +242,85 @@ class MockStore {
       project.status = status;
       this.save();
     }
+  }
+
+  deleteProject(id: string) {
+    this.data.projects = this.data.projects.filter(p => p.id !== id);
+    
+    // Cascading delete for endpoints and responses
+    const endpointsToDelete = this.data.endpoints.filter(e => e.projectId === id);
+    const endpointIds = new Set(endpointsToDelete.map(e => e.id));
+    
+    this.data.endpoints = this.data.endpoints.filter(e => e.projectId !== id);
+    this.data.responses = this.data.responses.filter(r => !endpointIds.has(r.endpointId));
+    
+    this.save();
+  }
+
+  // Export / Import Project Backup
+  exportProject(projectId: string): string {
+      const project = this.getProject(projectId);
+      if (!project) throw new Error("Project not found");
+      
+      const endpoints = this.getEndpoints(projectId);
+      const responses = endpoints.flatMap(e => this.getResponses(e.id));
+
+      const backup = {
+          version: 1,
+          type: 'castlemock-lite-backup',
+          timestamp: Date.now(),
+          project,
+          endpoints,
+          responses
+      };
+
+      return JSON.stringify(backup, null, 2);
+  }
+
+  importProjectBackup(backupData: any): Project {
+      if (backupData.type !== 'castlemock-lite-backup' || !backupData.project) {
+          throw new Error("Invalid backup file format");
+      }
+
+      // Generate new IDs to avoid collision if importing same project multiple times
+      const oldPrjId = backupData.project.id;
+      const newPrjId = generateId();
+      
+      const newProject: Project = {
+          ...backupData.project,
+          id: newPrjId,
+          name: `${backupData.project.name} (Imported)`,
+          status: 'stopped'
+      };
+
+      const idMap: Record<string, string> = {}; // Old Endpoint ID -> New Endpoint ID
+
+      const newEndpoints = (backupData.endpoints || []).map((e: MockEndpoint) => {
+          const newId = generateId();
+          idMap[e.id] = newId;
+          return { ...e, id: newId, projectId: newPrjId };
+      });
+
+      const newResponses = (backupData.responses || []).map((r: MockResponse) => {
+          const newEpId = idMap[r.endpointId];
+          if (!newEpId) return null; // Orphaned response
+          const newId = generateId();
+          
+          // Fix defaultResponseId linkage
+          const parentEp = newEndpoints.find((ep: MockEndpoint) => ep.id === newEpId);
+          if (parentEp && parentEp.defaultResponseId === r.id) {
+              parentEp.defaultResponseId = newId;
+          }
+
+          return { ...r, id: newId, endpointId: newEpId };
+      }).filter(Boolean) as MockResponse[];
+
+      this.data.projects.push(newProject);
+      this.data.endpoints.push(...newEndpoints);
+      this.data.responses.push(...newResponses);
+      this.save();
+
+      return newProject;
   }
 
   // Endpoints
