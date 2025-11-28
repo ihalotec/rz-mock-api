@@ -52,8 +52,14 @@ export interface MockResponse {
   statusCode: number;
   headers: Record<string, string>;
   body: string; // JSON string
-  delay: number; // ms
-  matchType?: 'json' | 'regex'; 
+  
+  // Latency Config
+  delay: number; // Used for fixed delay
+  delayMode?: 'fixed' | 'random';
+  delayMin?: number;
+  delayMax?: number;
+
+  matchType?: 'json' | 'regex' | 'body_json'; 
   matchExpression?: string;
 }
 

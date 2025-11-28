@@ -1,4 +1,5 @@
 
+
 import React, { useEffect, useState } from 'react';
 import { MockEndpoint, MockResponse, ResponseStrategy } from '../../lib/types';
 import { store } from '../../lib/store';
@@ -7,7 +8,7 @@ import { Textarea } from '../../components/ui/Textarea';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { METHOD_COLORS } from '../../lib/utils';
-import { Save, Clock, Plus, Trash2, Split, Flag, Shuffle, FileText, Code, Database, Copy, Check, Settings } from 'lucide-react';
+import { Save, Clock, Plus, Trash2, Split, Flag, Shuffle, FileText, Settings, X, Tag, Check, Copy, Database, Code } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface EndpointViewerProps {
@@ -50,10 +51,12 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
   const [isDirty, setIsDirty] = useState(false);
   const [editResponse, setEditResponse] = useState<MockResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'docs' | 'mock'>('docs');
+  
+  // Local state for headers to ensure stable editing
+  const [headerList, setHeaderList] = useState<{id: string, key: string, value: string}[]>([]);
 
   useEffect(() => {
     loadData();
-    // Reset tab to docs when endpoint changes
     setActiveTab('docs');
   }, [endpoint]);
 
@@ -72,6 +75,18 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
         }
     }
   }, [selectedResponseId, responses]);
+
+  // Sync editResponse headers to local list
+  useEffect(() => {
+    if (editResponse) {
+        const list = Object.entries(editResponse.headers || {}).map(([k, v]) => ({
+            id: Math.random().toString(36).substr(2, 9),
+            key: k,
+            value: v
+        }));
+        setHeaderList(list);
+    }
+  }, [editResponse?.id]);
 
   const loadData = () => {
     const loadedResponses = store.getResponses(endpoint.id);
@@ -139,6 +154,37 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
           setIsDirty(true);
       }
   };
+
+  // --- Headers List Management ---
+  const handleHeaderListChange = (id: string, field: 'key' | 'value', val: string) => {
+    const newList = headerList.map(h => h.id === id ? { ...h, [field]: val } : h);
+    setHeaderList(newList);
+    
+    // Sync to editResponse
+    const headersObj: Record<string, string> = {};
+    newList.forEach(h => {
+        if (h.key.trim()) headersObj[h.key] = h.value;
+    });
+    // We update the state but use functional update to avoid dependency loops if we depended on editResponse
+    setEditResponse(prev => prev ? { ...prev, headers: headersObj } : null);
+    setIsDirty(true);
+  };
+
+  const addHeaderItem = () => {
+      setHeaderList([...headerList, { id: Math.random().toString(36).substr(2, 9), key: '', value: '' }]);
+  };
+
+  const removeHeaderItem = (id: string) => {
+      const newList = headerList.filter(h => h.id !== id);
+      setHeaderList(newList);
+      const headersObj: Record<string, string> = {};
+      newList.forEach(h => {
+          if (h.key.trim()) headersObj[h.key] = h.value;
+      });
+      setEditResponse(prev => prev ? { ...prev, headers: headersObj } : null);
+      setIsDirty(true);
+  };
+
 
   if (!editResponse) return null;
 
@@ -320,7 +366,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                         </select>
                     </div>
 
-                    <div className="flex gap-6 items-start h-[600px]">
+                    <div className="flex gap-6 items-start min-h-[600px]">
                         {/* Responses List Sidebar */}
                         <div className="w-64 shrink-0 flex flex-col h-full border border-gray-800 rounded-lg bg-[#0f1117] overflow-hidden">
                             <div className="p-3 border-b border-gray-800 flex justify-between items-center bg-gray-900/50">
@@ -329,7 +375,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                     <Plus className="w-4 h-4" />
                                 </button>
                             </div>
-                            <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                            <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar max-h-[700px]">
                                 {responses.map(res => (
                                     <div 
                                         key={res.id}
@@ -416,6 +462,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                                 >
                                                     <option value="">No Condition (Fallback)</option>
                                                     <option value="json">JSON Property (Simple JQ)</option>
+                                                    <option value="body_json">JSON Body Subset (Partial Match)</option>
                                                     <option value="regex">Regex Body Match</option>
                                                 </select>
                                             </div>
@@ -435,6 +482,17 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                                         value={editResponse.matchExpression || ''}
                                                         onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
                                                     />
+                                                )}
+                                                {editResponse.matchType === 'body_json' && (
+                                                    <div className="flex flex-col gap-1">
+                                                        <Textarea 
+                                                            placeholder='{ "key": "value" }' 
+                                                            className="h-24 font-mono text-xs"
+                                                            value={editResponse.matchExpression || ''}
+                                                            onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
+                                                        />
+                                                        <span className="text-[10px] text-gray-500">Response triggers if request body contains this JSON structure.</span>
+                                                    </div>
                                                 )}
                                                 {(!editResponse.matchType) && (
                                                     <div className="h-9 flex items-center text-xs text-gray-500 italic">This response will be used if no other conditions match.</div>
@@ -456,20 +514,100 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                     </div>
                                     <div>
                                         <label className="text-xs text-gray-500 mb-1 block">Latency (ms)</label>
-                                        <div className="relative">
-                                            <Clock className="w-4 h-4 absolute left-3 top-2.5 text-gray-500" />
-                                            <Input 
-                                                type="number"
-                                                min="0"
-                                                placeholder="0"
-                                                value={editResponse.delay === 0 ? '' : editResponse.delay}
-                                                onChange={(e) => {
-                                                    const val = parseInt(e.target.value);
-                                                    handleEditChange('delay', isNaN(val) ? 0 : val);
-                                                }}
-                                                className="pl-9 font-mono bg-gray-900/50"
-                                            />
+                                        <div className="flex gap-2">
+                                            <select 
+                                                className="w-24 rounded-md border border-gray-700 bg-gray-900 px-2 text-xs text-gray-300 focus:outline-none focus:ring-1 focus:ring-gray-600"
+                                                value={editResponse.delayMode || 'fixed'}
+                                                onChange={(e) => handleEditChange('delayMode', e.target.value)}
+                                            >
+                                                <option value="fixed">Fixed</option>
+                                                <option value="random">Random</option>
+                                            </select>
+                                            
+                                            {editResponse.delayMode === 'random' ? (
+                                                <div className="flex items-center gap-2 flex-1">
+                                                    <Input 
+                                                        type="number"
+                                                        min="0"
+                                                        placeholder="Min"
+                                                        value={editResponse.delayMin === undefined ? 0 : editResponse.delayMin}
+                                                        onChange={(e) => handleEditChange('delayMin', parseInt(e.target.value) || 0)}
+                                                        className="font-mono bg-gray-900/50 text-xs"
+                                                    />
+                                                    <span className="text-gray-500">-</span>
+                                                    <Input 
+                                                        type="number"
+                                                        min="0"
+                                                        placeholder="Max"
+                                                        value={editResponse.delayMax === undefined ? 0 : editResponse.delayMax}
+                                                        onChange={(e) => handleEditChange('delayMax', parseInt(e.target.value) || 0)}
+                                                        className="font-mono bg-gray-900/50 text-xs"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <div className="relative flex-1">
+                                                    <Clock className="w-4 h-4 absolute left-3 top-2.5 text-gray-500" />
+                                                    <Input 
+                                                        type="number"
+                                                        min="0"
+                                                        placeholder="0"
+                                                        value={editResponse.delay === 0 ? '' : editResponse.delay}
+                                                        onChange={(e) => {
+                                                            const val = parseInt(e.target.value);
+                                                            handleEditChange('delay', isNaN(val) ? 0 : val);
+                                                        }}
+                                                        className="pl-9 font-mono bg-gray-900/50"
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
+                                    </div>
+                                </div>
+
+                                {/* Response Headers Section */}
+                                <div className="mb-6">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="text-xs text-gray-500 flex items-center">
+                                            <Tag className="w-3 h-3 mr-1" /> Response Headers
+                                        </label>
+                                        <button 
+                                            onClick={addHeaderItem}
+                                            className="text-xs text-primary hover:text-white flex items-center"
+                                        >
+                                            <Plus className="w-3 h-3 mr-1" /> Add Header
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="bg-gray-900/30 border border-gray-800 rounded-lg p-2 space-y-2">
+                                        {headerList.length > 0 ? (
+                                            headerList.map((item) => (
+                                                <div key={item.id} className="flex gap-2 items-center group">
+                                                    <Input 
+                                                        className="flex-1 h-8 text-xs font-mono bg-gray-900 border-gray-700"
+                                                        placeholder="Key"
+                                                        value={item.key}
+                                                        onChange={(e) => handleHeaderListChange(item.id, 'key', e.target.value)}
+                                                    />
+                                                    <Input 
+                                                        className="flex-1 h-8 text-xs font-mono bg-gray-900 border-gray-700"
+                                                        placeholder="Value"
+                                                        value={item.value}
+                                                        onChange={(e) => handleHeaderListChange(item.id, 'value', e.target.value)}
+                                                    />
+                                                    <button 
+                                                        onClick={() => removeHeaderItem(item.id)}
+                                                        className="p-1 text-gray-600 hover:text-red-400 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
+                                                        title="Remove Header"
+                                                    >
+                                                        <X className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="text-center py-2 text-xs text-gray-600 italic">
+                                                No custom headers defined.
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 

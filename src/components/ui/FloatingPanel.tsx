@@ -9,7 +9,7 @@ interface FloatingPanelProps {
   isMinimized: boolean;
   onClose: () => void;
   onMinimize: () => void;
-  children: React.ReactNode;
+  children?: React.ReactNode;
   initialPosition?: { x: number; y: number };
   initialSize?: { w: number; h: number };
   icon: React.ReactNode;

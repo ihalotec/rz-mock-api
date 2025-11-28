@@ -1,4 +1,5 @@
 
+
 import { StoreData, Project, MockEndpoint, MockResponse, LogEntry, SwaggerDocs } from './types';
 import { generateId } from './utils';
 
@@ -22,6 +23,34 @@ function getObjectValue(obj: any, path: string): any {
   // Handle simple dot notation $.key.subkey or key.subkey
   const cleanPath = path.startsWith('$.') ? path.substring(2) : path;
   return cleanPath.split('.').reduce((o, i) => (o ? o[i] : undefined), obj);
+}
+
+// Deep subset matching: checks if 'subset' is present within 'actual'
+function isSubset(subset: any, actual: any): boolean {
+    if (subset === actual) return true;
+    if (subset instanceof Date && actual instanceof Date) return subset.getTime() === actual.getTime();
+    if (!subset || !actual || typeof subset !== 'object' || typeof actual !== 'object') return subset === actual;
+
+    if (Array.isArray(subset)) {
+        if (!Array.isArray(actual)) return false;
+        // For arrays, we check if every item in subset exists in actual (order doesn't matter for this simple mock impl, 
+        // or strictly position based? Let's do loose inclusion for mocking convenience)
+        // Actually, strict structure matching is usually better for APIs:
+        // Let's assume standard subset: properties in subset must exist in actual with same values.
+        
+        // However, for arrays, simpler is: subset[i] matches actual[i] ? 
+        // Or subset is contained in actual? 
+        // Let's do: Every property in subset object must match property in actual object.
+        for (let i = 0; i < subset.length; i++) {
+             // For exact array matching or partial? Let's go with strict index matching for now to be safe
+             // or maybe we just check if actual contains it.
+             // Let's stick to object property subset logic. 
+             if (!isSubset(subset[i], actual[i])) return false;
+        }
+        return true;
+    }
+
+    return Object.keys(subset).every(key => isSubset(subset[key], actual[key]));
 }
 
 // Recursively resolve Swagger $ref pointers
@@ -266,7 +295,10 @@ class MockStore {
       statusCode,
       headers: { "Content-Type": "application/json" },
       body,
-      delay: 0
+      delay: 0,
+      delayMode: 'fixed',
+      delayMin: 100,
+      delayMax: 500
     };
     this.data.responses.push(newResponse);
     
@@ -373,6 +405,15 @@ class MockStore {
                         }
                     } catch (e) { return false; }
                 }
+
+                if (r.matchType === 'body_json') {
+                   try {
+                       const subset = JSON.parse(r.matchExpression);
+                       const actual = JSON.parse(requestBody);
+                       return isSubset(subset, actual);
+                   } catch(e) { return false; }
+                }
+
                 return false;
             });
         }
@@ -410,10 +451,6 @@ class MockStore {
     const paths = swaggerJson.paths || {};
     
     const resolve = (obj: any) => resolveRefs(obj, swaggerJson);
-
-    // To prevent blocking UI on huge files, we process in chunks or just handle errors gracefully.
-    // Since this runs in client, heavy processing will freeze. 
-    // For now we process synchronously but wrapped in try-catch blocks per endpoint to avoid total failure.
 
     Object.keys(paths).forEach(path => {
       try {
@@ -479,7 +516,8 @@ class MockStore {
                 statusCode: successKey ? parseInt(successKey) : 200,
                 headers: { "Content-Type": "application/json" },
                 body: responseBody,
-                delay: 0
+                delay: 0,
+                delayMode: 'fixed'
             };
             this.data.responses.push(newResponse);
             newEndpoint.defaultResponseId = newResponse.id;

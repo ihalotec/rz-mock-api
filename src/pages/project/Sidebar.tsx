@@ -31,7 +31,7 @@ const Sidebar = ({
   const navigate = useNavigate();
   
   // Grouping Logic
-  const groupedEndpoints = useMemo(() => {
+  const groupedEndpoints = useMemo<Record<string, MockEndpoint[]>>(() => {
       const groups: Record<string, MockEndpoint[]> = {};
       const filtered = endpoints.filter(e => 
         e.name.toLowerCase().includes(search.toLowerCase()) || 

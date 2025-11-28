@@ -1,6 +1,7 @@
 
+
 import React, { useState, useEffect } from 'react';
-import { Play, Loader2, FileJson } from 'lucide-react';
+import { Play, Loader2, FileJson, Plus, Trash2, X, Tag } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
@@ -15,19 +16,53 @@ interface TestConsoleProps {
 
 const TestConsole = ({ endpoint, project }: TestConsoleProps) => {
   const [response, setResponse] = useState<any>(null);
+  const [responseHeaders, setResponseHeaders] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [urlPath, setUrlPath] = useState(endpoint.path);
   const [requestBody, setRequestBody] = useState('');
   const [status, setStatus] = useState<number | null>(null);
   const [debugInfo, setDebugInfo] = useState<string | null>(null);
+  
+  // Request Headers State
+  const [requestHeaders, setRequestHeaders] = useState<{id: string, key: string, value: string}[]>([]);
+  const [showHeaders, setShowHeaders] = useState(false);
 
   useEffect(() => {
     setUrlPath(endpoint.path);
     setResponse(null);
+    setResponseHeaders({});
     setStatus(null);
     setDebugInfo(null);
     setRequestBody('');
+    
+    // Load headers from localStorage
+    const saved = localStorage.getItem(`req_headers_${endpoint.id}`);
+    if (saved) {
+        try { setRequestHeaders(JSON.parse(saved)); } catch (e) { setRequestHeaders([]); }
+    } else {
+        setRequestHeaders([]);
+    }
   }, [endpoint]);
+
+  // Save headers to localStorage on change
+  useEffect(() => {
+     if (endpoint?.id) {
+         localStorage.setItem(`req_headers_${endpoint.id}`, JSON.stringify(requestHeaders));
+     }
+  }, [requestHeaders, endpoint?.id]);
+
+  const handleAddHeader = () => {
+      setRequestHeaders([...requestHeaders, { id: Math.random().toString(36), key: '', value: '' }]);
+      setShowHeaders(true);
+  };
+
+  const handleRemoveHeader = (id: string) => {
+      setRequestHeaders(requestHeaders.filter(h => h.id !== id));
+  };
+
+  const handleUpdateHeader = (id: string, field: 'key' | 'value', value: string) => {
+      setRequestHeaders(requestHeaders.map(h => h.id === id ? { ...h, [field]: value } : h));
+  };
 
   const handleTest = async () => {
     if (project.status === 'stopped') {
@@ -37,31 +72,55 @@ const TestConsole = ({ endpoint, project }: TestConsoleProps) => {
 
     setLoading(true);
     setResponse(null);
+    setResponseHeaders({});
     setStatus(null);
     setDebugInfo(null);
 
+    // Prepare Request Data
+    const effectiveHeaders = requestHeaders.reduce((acc, h) => {
+        if (h.key.trim()) acc[h.key] = h.value;
+        return acc;
+    }, {} as Record<string, string>);
+
     // Simulate Network Latency
     setTimeout(() => {
+        // Pass headers to log or matcher? Currently matcher doesn't use them but we simulate the request.
         const match = store.findMatch(project.id, endpoint.method, urlPath, requestBody);
         
         if (match) {
+            // Calculate Delay
+            let finalDelay = match.response.delay || 0;
+            if (match.response.delayMode === 'random') {
+                const min = match.response.delayMin || 0;
+                const max = match.response.delayMax || 1000;
+                const effectiveMax = Math.max(min, max);
+                finalDelay = Math.floor(Math.random() * (effectiveMax - min + 1)) + min;
+            }
+            
             // Apply configured delay
             setTimeout(() => {
                 setStatus(match.response.statusCode);
-                setDebugInfo(`Strategy: ${match.matchedStrategy} | Response: ${match.response.name}`);
+                setResponseHeaders(match.response.headers || {});
+                
+                // Add note about request headers used
+                const headerNote = Object.keys(effectiveHeaders).length > 0 
+                    ? ` | Req Headers: ${Object.keys(effectiveHeaders).join(', ')}` 
+                    : '';
+
+                setDebugInfo(`Strategy: ${match.matchedStrategy} | Response: ${match.response.name} | Latency: ${finalDelay}ms${headerNote}`);
                 try {
                     setResponse(JSON.parse(match.response.body));
                 } catch (e) {
                     setResponse(match.response.body);
                 }
                 setLoading(false);
-            }, match.response.delay || 100);
+            }, finalDelay);
         } else {
             setStatus(404);
             setResponse({ error: "No mock response found for this path/method combination." });
             setLoading(false);
         }
-    }, 300);
+    }, 100);
   };
 
   const showBodyInput = ['POST', 'PUT', 'PATCH'].includes(endpoint.method);
@@ -83,6 +142,46 @@ const TestConsole = ({ endpoint, project }: TestConsoleProps) => {
                 </div>
             </div>
             
+            {/* Request Headers Section */}
+            <div className="mb-3">
+                 <div className="flex items-center justify-between mb-1">
+                     <button 
+                        onClick={() => setShowHeaders(!showHeaders)}
+                        className="text-[10px] text-gray-500 flex items-center uppercase tracking-wider font-semibold hover:text-gray-300 transition-colors"
+                     >
+                        <Tag className="w-3 h-3 mr-1" /> Request Headers {requestHeaders.length > 0 && `(${requestHeaders.length})`}
+                     </button>
+                     <button onClick={handleAddHeader} className="text-[10px] text-primary hover:text-white flex items-center">
+                        <Plus className="w-3 h-3" />
+                     </button>
+                 </div>
+                 
+                 {showHeaders && (
+                     <div className="space-y-1 mb-2 bg-gray-900/30 p-2 rounded border border-gray-800">
+                        {requestHeaders.length === 0 && <div className="text-[10px] text-gray-600 italic">No headers</div>}
+                        {requestHeaders.map(h => (
+                            <div key={h.id} className="flex gap-1">
+                                <Input 
+                                    className="h-6 text-[10px] px-1 bg-gray-900 border-gray-700" 
+                                    placeholder="Name"
+                                    value={h.key}
+                                    onChange={(e) => handleUpdateHeader(h.id, 'key', e.target.value)}
+                                />
+                                <Input 
+                                    className="h-6 text-[10px] px-1 bg-gray-900 border-gray-700" 
+                                    placeholder="Value"
+                                    value={h.value}
+                                    onChange={(e) => handleUpdateHeader(h.id, 'value', e.target.value)}
+                                />
+                                <button onClick={() => handleRemoveHeader(h.id)} className="text-gray-500 hover:text-red-400">
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </div>
+                        ))}
+                     </div>
+                 )}
+            </div>
+
             {showBodyInput && (
                 <div className="mb-3">
                      <div className="text-[10px] text-gray-500 mb-1 flex items-center uppercase tracking-wider font-semibold">
@@ -121,6 +220,20 @@ const TestConsole = ({ endpoint, project }: TestConsoleProps) => {
                             {debugInfo}
                         </div>
                     )}
+                    
+                    {/* Headers Display */}
+                    {Object.keys(responseHeaders).length > 0 && (
+                        <div className="bg-gray-900/30 border border-gray-800 rounded p-2">
+                             <div className="text-[9px] text-gray-500 font-bold mb-1 uppercase">Response Headers</div>
+                             {Object.entries(responseHeaders).map(([k, v]) => (
+                                 <div key={k} className="flex justify-between text-[10px] font-mono border-b border-gray-800/50 last:border-0 py-0.5">
+                                     <span className="text-gray-400">{k}:</span>
+                                     <span className="text-gray-300">{v}</span>
+                                 </div>
+                             ))}
+                        </div>
+                    )}
+
                     <div className="bg-gray-900 rounded-md p-3 border border-gray-800 overflow-x-auto">
                         <pre className="text-xs font-mono text-gray-300">
                             {JSON.stringify(response, null, 2)}
