@@ -1,7 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Upload, Play, Square, Settings, ChevronLeft, ChevronDown, ChevronRight, Folder, Tag } from 'lucide-react';
+import { Plus, Search, Upload, ChevronDown, ChevronRight, Folder, Tag } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { MockEndpoint } from '../../lib/types';
 import { cn, METHOD_COLORS } from '../../lib/utils';
@@ -12,8 +11,6 @@ interface SidebarProps {
   selectedEndpointId?: string;
   onSelectEndpoint: (id: string) => void;
   onImportSwagger: () => void;
-  onToggleServer: () => void;
-  isServerRunning: boolean;
   onCreateEndpoint: () => void;
 }
 
@@ -22,13 +19,10 @@ const Sidebar = ({
   selectedEndpointId, 
   onSelectEndpoint, 
   onImportSwagger,
-  onToggleServer,
-  isServerRunning,
   onCreateEndpoint
 }: SidebarProps) => {
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  const navigate = useNavigate();
   
   // Grouping Logic
   const groupedEndpoints = useMemo<Record<string, MockEndpoint[]>>(() => {
@@ -70,29 +64,13 @@ const Sidebar = ({
   };
 
   return (
-    <div className="w-80 h-screen bg-sidebar border-r border-border flex flex-col fixed left-0 top-0 z-20">
+    <div className="w-80 border-r border-border flex flex-col fixed left-0 top-14 bottom-0 z-20 bg-sidebar">
       <div className="p-4 border-b border-border">
-         <button 
-            onClick={() => navigate('/')}
-            className="flex items-center text-xs text-gray-500 hover:text-white mb-4 transition-colors"
-         >
-            <ChevronLeft className="w-3 h-3 mr-1" /> Back to Dashboard
-         </button>
          <div className="flex items-center justify-between mb-4">
-            <div className="font-bold text-lg tracking-wide text-white">API References</div>
+            <div className="font-bold text-sm tracking-wide text-gray-400 uppercase">Explorer</div>
              <Button variant="ghost" size="icon" onClick={onImportSwagger} title="Import Swagger / OpenAPI">
                 <Upload className="w-4 h-4" />
              </Button>
-         </div>
-         <div className="flex gap-2 mb-2">
-            <Button 
-                variant={isServerRunning ? "danger" : "secondary"} 
-                className={cn("w-full justify-center text-xs h-8", isServerRunning && "bg-red-500/10 text-red-500 border-red-900")}
-                onClick={onToggleServer}
-            >
-                {isServerRunning ? <Square className="w-3 h-3 mr-2 fill-current" /> : <Play className="w-3 h-3 mr-2 fill-current" />}
-                {isServerRunning ? 'Stop Server' : 'Run Mock Server'}
-            </Button>
          </div>
          <div className="relative">
              <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-500" />
@@ -163,13 +141,6 @@ const Sidebar = ({
                 ))
             )}
         </div>
-      </div>
-
-      <div className="p-4 border-t border-border">
-          <div className="text-xs text-gray-600 flex justify-between">
-              <span>CastleMock Lite v1.0</span>
-              <Settings className="w-3 h-3" />
-          </div>
       </div>
     </div>
   );

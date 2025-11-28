@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard from './pages/dashboard/Dashboard';
 import ProjectLayout from './pages/project/ProjectLayout';
+import Documentation from './pages/docs/Documentation';
 import { store } from './lib/store';
 import { Loader2 } from 'lucide-react';
 
@@ -27,6 +28,7 @@ const App = () => {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/project/:projectId/*" element={<ProjectLayout />} />
+        <Route path="/docs" element={<Documentation />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </HashRouter>

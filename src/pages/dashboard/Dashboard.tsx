@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Box, ArrowRight } from 'lucide-react';
@@ -6,6 +7,7 @@ import { Project } from '../../lib/types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
+import { Header } from '../../components/layout/Header';
 
 const Dashboard = () => {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -26,12 +28,13 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background text-gray-100 p-8">
-      <div className="max-w-5xl mx-auto">
+    <div className="min-h-screen bg-background text-gray-100 pt-14">
+      <Header />
+      <div className="p-8 max-w-5xl mx-auto">
         <header className="flex items-center justify-between mb-12">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight mb-2">CastleMock Lite</h1>
-            <p className="text-gray-400">Manage your mock REST APIs with ease.</p>
+            <h1 className="text-3xl font-bold tracking-tight mb-2">Projects</h1>
+            <p className="text-gray-400">Manage your mock environments.</p>
           </div>
           <Button onClick={() => setIsModalOpen(true)}>
             <Plus className="w-4 h-4 mr-2" />

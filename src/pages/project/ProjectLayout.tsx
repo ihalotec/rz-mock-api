@@ -10,6 +10,7 @@ import { Project, MockEndpoint } from '../../lib/types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { FloatingPanel } from '../../components/ui/FloatingPanel';
+import { Header } from '../../components/layout/Header';
 import { PlayCircle, Activity, Upload, Link as LinkIcon, FileJson, Loader2 } from 'lucide-react';
 
 const ProjectLayout = () => {
@@ -117,7 +118,6 @@ const ProjectLayout = () => {
   const handleCreateEndpoint = () => {
       if(projectId && newEndpoint.name && newEndpoint.path) {
           const ep = store.createEndpoint(projectId, newEndpoint.method, newEndpoint.path, newEndpoint.name);
-          // Create default response
           store.createResponse(ep.id, "Success", "{}", 200);
           refreshEndpoints();
           setSelectedEndpointId(ep.id);
@@ -131,25 +131,25 @@ const ProjectLayout = () => {
   const selectedEndpoint = endpoints.find(e => e.id === selectedEndpointId);
 
   return (
-    <div className="flex h-screen overflow-hidden relative">
+    <div className="flex h-screen overflow-hidden relative bg-background pt-14">
+      <Header project={project} onToggleServer={handleToggleServer} />
+
       <Sidebar 
         endpoints={endpoints} 
         selectedEndpointId={selectedEndpointId || undefined}
         onSelectEndpoint={setSelectedEndpointId}
         onImportSwagger={() => setIsImportModalOpen(true)}
-        onToggleServer={handleToggleServer}
-        isServerRunning={project.status === 'running'}
         onCreateEndpoint={() => setIsCreateModalOpen(true)}
       />
       
-      <main className="flex-1 ml-80 flex bg-background">
+      <main className="flex-1 ml-80 flex bg-background relative z-10">
         {selectedEndpoint ? (
             <>
-                <div className="flex-1 min-w-0 flex flex-col">
+                <div className="flex-1 min-w-0 flex flex-col h-[calc(100vh-3.5rem)]">
                     <EndpointViewer endpoint={selectedEndpoint} onUpdate={refreshEndpoints} />
                     
                     {/* Floating Panel Triggers (Bottom Bar) */}
-                    <div className="h-10 border-t border-border bg-[#16181d] flex items-center px-4 gap-4">
+                    <div className="h-10 border-t border-border bg-[#16181d] flex items-center px-4 gap-4 shrink-0">
                         <button 
                             onClick={() => { setShowTestConsole(true); setTestConsoleMinimized(false); }}
                             className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded transition-colors ${showTestConsole && !testConsoleMinimized ? 'bg-primary/20 text-primary' : 'text-gray-400 hover:text-white'}`}
@@ -209,7 +209,7 @@ const ProjectLayout = () => {
         </>
       )}
 
-      {/* Create Endpoint Modal */}
+      {/* Modals - (Import/Create) - Kept same as before but rendered here */}
       {isCreateModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
              <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 w-full max-w-md shadow-2xl">
