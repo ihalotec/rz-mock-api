@@ -332,7 +332,7 @@ class MockStore {
   }
 
   // Mock Engine Logic
-  findMatch(projectId: string, method: string, path: string, requestBody?: string): { endpoint: MockEndpoint, response: MockResponse, matchedStrategy: string } | null {
+  findMatch(projectId: string, method: string, path: string, requestBody?: string, requestHeaders?: Record<string, string>): { endpoint: MockEndpoint, response: MockResponse, matchedStrategy: string } | null {
     const start = Date.now();
     const project = this.data.projects.find(p => p.id === projectId);
     
@@ -383,6 +383,17 @@ class MockStore {
             const randomIndex = Math.floor(Math.random() * responses.length);
             selectedResponse = responses[randomIndex];
         } 
+        else if (endpoint.responseStrategy === 'HEADER_MATCH' && requestHeaders) {
+            selectedResponse = responses.find(r => {
+                try {
+                    if (!r.matchExpression) return false;
+                    const { key, value } = JSON.parse(r.matchExpression);
+                    if (!key) return false;
+                    const headerVal = Object.entries(requestHeaders).find(([k]) => k.toLowerCase() === key.toLowerCase())?.[1];
+                    return headerVal === value;
+                } catch { return false; }
+            });
+        }
         else if (endpoint.responseStrategy === 'QUERY_MATCH' && requestBody) {
             selectedResponse = responses.find(r => {
                 if (!r.matchType || !r.matchExpression) return false;

@@ -2,7 +2,7 @@
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
-export type ResponseStrategy = 'DEFAULT' | 'RANDOM' | 'QUERY_MATCH';
+export type ResponseStrategy = 'DEFAULT' | 'RANDOM' | 'QUERY_MATCH' | 'HEADER_MATCH';
 
 export interface Project {
   id: string;
@@ -59,7 +59,7 @@ export interface MockResponse {
   delayMin?: number;
   delayMax?: number;
 
-  matchType?: 'json' | 'regex' | 'body_json'; 
+  matchType?: 'json' | 'regex' | 'body_json' | 'header'; 
   matchExpression?: string;
 }
 

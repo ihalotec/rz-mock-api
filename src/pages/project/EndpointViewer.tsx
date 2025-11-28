@@ -55,6 +55,9 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
   // Local state for headers to ensure stable editing
   const [headerList, setHeaderList] = useState<{id: string, key: string, value: string}[]>([]);
 
+  // Local state for Header Match configuration
+  const [headerMatchConfig, setHeaderMatchConfig] = useState({ key: '', value: '' });
+
   useEffect(() => {
     loadData();
     setActiveTab('docs');
@@ -72,9 +75,21 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
         if (found) {
             setEditResponse({ ...found });
             setIsDirty(false);
+            
+            // Initialize Header Config if strategy is HEADER_MATCH
+            if (endpoint.responseStrategy === 'HEADER_MATCH' && found.matchExpression) {
+                try {
+                    const parsed = JSON.parse(found.matchExpression);
+                    setHeaderMatchConfig({ key: parsed.key || '', value: parsed.value || '' });
+                } catch {
+                    setHeaderMatchConfig({ key: '', value: '' });
+                }
+            } else {
+                setHeaderMatchConfig({ key: '', value: '' });
+            }
         }
     }
-  }, [selectedResponseId, responses]);
+  }, [selectedResponseId, responses, endpoint.responseStrategy]);
 
   // Sync editResponse headers to local list
   useEffect(() => {
@@ -130,6 +145,12 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
 
   const handleSave = () => {
     if (editResponse) {
+      // If HEADER_MATCH, save config to matchExpression
+      if (endpoint.responseStrategy === 'HEADER_MATCH') {
+          editResponse.matchExpression = JSON.stringify(headerMatchConfig);
+          editResponse.matchType = 'header';
+      }
+
       store.updateResponse(editResponse);
       setIsDirty(false);
       const updatedList = responses.map(r => r.id === editResponse.id ? editResponse : r);
@@ -153,6 +174,11 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
           });
           setIsDirty(true);
       }
+  };
+
+  const handleHeaderMatchChange = (field: 'key' | 'value', val: string) => {
+      setHeaderMatchConfig(prev => ({ ...prev, [field]: val }));
+      setIsDirty(true);
   };
 
   // --- Headers List Management ---
@@ -348,6 +374,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                             <div className="p-2 bg-gray-800 rounded-md text-gray-300">
                                 {endpoint.responseStrategy === 'RANDOM' && <Shuffle className="w-5 h-5" />}
                                 {endpoint.responseStrategy === 'QUERY_MATCH' && <Split className="w-5 h-5" />}
+                                {endpoint.responseStrategy === 'HEADER_MATCH' && <Tag className="w-5 h-5" />}
                                 {endpoint.responseStrategy === 'DEFAULT' && <Flag className="w-5 h-5" />}
                             </div>
                             <div>
@@ -363,6 +390,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                             <option value="DEFAULT">Default (Fixed)</option>
                             <option value="RANDOM">Random</option>
                             <option value="QUERY_MATCH">Match Request (Conditional)</option>
+                            <option value="HEADER_MATCH">Header Match</option>
                         </select>
                     </div>
 
@@ -418,9 +446,9 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                                     Default
                                                 </Badge>
                                             )}
-                                            {endpoint.responseStrategy === 'QUERY_MATCH' && res.matchType && (
+                                            {(endpoint.responseStrategy === 'QUERY_MATCH' || endpoint.responseStrategy === 'HEADER_MATCH') && res.matchType && (
                                                 <span className="text-[10px] text-gray-500 bg-gray-800 px-1 rounded">
-                                                    {res.matchType}
+                                                    {res.matchType === 'header' ? 'Header' : res.matchType}
                                                 </span>
                                             )}
                                         </div>
@@ -447,7 +475,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                             </div>
 
                             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                                {/* Conditional Logic UI */}
+                                {/* Conditional Logic UI - Query Match */}
                                 {endpoint.responseStrategy === 'QUERY_MATCH' && (
                                     <div className="mb-6 p-4 bg-gray-900/40 rounded-lg border border-gray-800">
                                         <h3 className="text-xs font-semibold text-primary uppercase mb-3 flex items-center">
@@ -498,6 +526,38 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                                     <div className="h-9 flex items-center text-xs text-gray-500 italic">This response will be used if no other conditions match.</div>
                                                 )}
                                             </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Conditional Logic UI - Header Match */}
+                                {endpoint.responseStrategy === 'HEADER_MATCH' && (
+                                    <div className="mb-6 p-4 bg-gray-900/40 rounded-lg border border-gray-800">
+                                        <h3 className="text-xs font-semibold text-primary uppercase mb-3 flex items-center">
+                                            <Tag className="w-3 h-3 mr-2" /> Header Match Condition
+                                        </h3>
+                                        <div className="flex gap-3">
+                                            <div className="flex-1">
+                                                <label className="text-[10px] text-gray-500 mb-1 block uppercase">Header Name</label>
+                                                <Input 
+                                                    placeholder="e.g. X-Api-Key" 
+                                                    className="h-9" 
+                                                    value={headerMatchConfig.key}
+                                                    onChange={(e) => handleHeaderMatchChange('key', e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="text-[10px] text-gray-500 mb-1 block uppercase">Expected Value</label>
+                                                <Input 
+                                                    placeholder="e.g. secret-token-123" 
+                                                    className="h-9" 
+                                                    value={headerMatchConfig.value}
+                                                    onChange={(e) => handleHeaderMatchChange('value', e.target.value)}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="mt-2 text-[10px] text-gray-500">
+                                            This response will trigger if the request header <strong>{headerMatchConfig.key || '...'}</strong> equals <strong>{headerMatchConfig.value || '...'}</strong>.
                                         </div>
                                     </div>
                                 )}

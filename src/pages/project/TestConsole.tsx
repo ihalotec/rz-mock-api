@@ -85,7 +85,7 @@ const TestConsole = ({ endpoint, project }: TestConsoleProps) => {
     // Simulate Network Latency
     setTimeout(() => {
         // Pass headers to log or matcher? Currently matcher doesn't use them but we simulate the request.
-        const match = store.findMatch(project.id, endpoint.method, urlPath, requestBody);
+        const match = store.findMatch(project.id, endpoint.method, urlPath, requestBody, effectiveHeaders);
         
         if (match) {
             // Calculate Delay
