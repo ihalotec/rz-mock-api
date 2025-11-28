@@ -1,5 +1,6 @@
 import { StoreData, Project, MockEndpoint, MockResponse, LogEntry, SwaggerDocs } from './types';
 import { generateId, resolveRefs } from './utils';
+import { findMatch } from './matcher';
 
 const DB_NAME = 'CastleMockLiteDB';
 const STORE_NAME = 'state';
@@ -13,30 +14,6 @@ const initialData: StoreData = {
 
 type LogListener = (log: LogEntry) => void;
 type DataListener = () => void;
-
-// --- Helper Functions ---
-// Simple object path retrieval for JSON matching
-function getObjectValue(obj: any, path: string): any {
-  if (!path) return undefined;
-  const cleanPath = path.startsWith('$.') ? path.substring(2) : path;
-  const normalizedPath = cleanPath.replace(/\[(\d+)\]/g, '.$1');
-  return normalizedPath.split('.').reduce((o, i) => (o ? o[i] : undefined), obj);
-}
-
-function isSubset(subset: any, actual: any): boolean {
-    if (subset === actual) return true;
-    if (subset instanceof Date && actual instanceof Date) return subset.getTime() === actual.getTime();
-    if (!subset || !actual || typeof subset !== 'object' || typeof actual !== 'object') return subset === actual;
-
-    if (Array.isArray(subset)) {
-        if (!Array.isArray(actual)) return false;
-        for (let i = 0; i < subset.length; i++) {
-             if (!isSubset(subset[i], actual[i])) return false;
-        }
-        return true;
-    }
-    return Object.keys(subset).every(key => isSubset(subset[key], actual[key]));
-}
 
 function generateExample(schema: any): any {
     if (!schema) return "null";
@@ -251,6 +228,7 @@ class MockStore {
       this.data.responses.push(...newResponses);
       this.save();
       return newProject;
+      
   }
 
   // Endpoints
@@ -286,7 +264,6 @@ class MockStore {
     return this.data.responses.filter(r => r.endpointId === endpointId);
   }
 
-  // Optimized method for Sidebar badges
   getResponseCounts(projectId: string): Record<string, number> {
     const counts: Record<string, number> = {};
     const endpoints = this.getEndpoints(projectId);
@@ -342,133 +319,49 @@ class MockStore {
   // Mock Engine
   findMatch(projectId: string, method: string, path: string, requestBody?: string, requestHeaders?: Record<string, string>): { endpoint: MockEndpoint, response: MockResponse, matchedStrategy: string } | null {
     const start = Date.now();
-    const project = this.data.projects.find(p => p.id === projectId);
-    
-    if (!project || project.status === 'stopped') {
-        this.notifyLog({
-            id: generateId(),
-            projectId,
-            timestamp: start,
-            method: method as any,
-            path,
-            status: 503,
-            duration: Date.now() - start,
-            requestBody,
-            responseBody: JSON.stringify({ error: "Server stopped" }),
-            responseName: "System Error"
-        });
-        return null;
-    }
+    const result = findMatch(this.data, projectId, method, path, requestBody, requestHeaders);
 
-    const endpoint = this.data.endpoints.find(e => e.projectId === projectId && e.method === method && e.path === path);
-
-    if (!endpoint) {
-        this.notifyLog({
-            id: generateId(),
-            projectId,
-            timestamp: start,
-            method: method as any,
-            path,
-            status: 404,
-            duration: Date.now() - start,
-            requestBody,
-            responseBody: JSON.stringify({ error: "Not Found" }),
-            responseName: "System Error"
-        });
-        return null;
-    }
-
-    const responses = this.data.responses.filter(r => r.endpointId === endpoint.id);
-    let selectedResponse: MockResponse | undefined;
-    let matchedStrategy: string = endpoint.responseStrategy;
-
-    if (responses.length > 0) {
-        if (endpoint.responseStrategy === 'RANDOM') {
-            const randomIndex = Math.floor(Math.random() * responses.length);
-            selectedResponse = responses[randomIndex];
-        } 
-        else if (endpoint.responseStrategy === 'HEADER_MATCH' && requestHeaders) {
-            selectedResponse = responses.find(r => {
-                try {
-                    if (!r.matchExpression) return false;
-                    const { key, value } = JSON.parse(r.matchExpression);
-                    if (!key) return false;
-                    const headerVal = Object.entries(requestHeaders).find(([k]) => k.toLowerCase() === key.toLowerCase())?.[1];
-                    return headerVal === value;
-                } catch { return false; }
-            });
-        }
-        else if (endpoint.responseStrategy === 'QUERY_MATCH' && requestBody) {
-            selectedResponse = responses.find(r => {
-                if (!r.matchType || !r.matchExpression) return false;
-                if (r.matchType === 'regex') {
-                    try { return new RegExp(r.matchExpression).test(requestBody); } catch { return false; }
-                }
-                if (r.matchType === 'json') {
-                    try {
-                        const jsonBody = JSON.parse(requestBody);
-                        let operator = '==';
-                        if (r.matchExpression.includes('!=')) operator = '!=';
-                        else if (r.matchExpression.includes('==')) operator = '==';
-                        else operator = 'exists';
-
-                        let path = r.matchExpression.trim();
-                        let expectedValueStr: string | undefined;
-
-                        if (operator !== 'exists') {
-                            const splitIdx = r.matchExpression.indexOf(operator);
-                            path = r.matchExpression.substring(0, splitIdx).trim();
-                            expectedValueStr = r.matchExpression.substring(splitIdx + operator.length).trim();
-                        }
-                        const actualValue = getObjectValue(jsonBody, path);
-
-                        if (operator === 'exists') return actualValue !== undefined && actualValue !== null;
-
-                        let expectedValue: any = expectedValueStr;
-                        if (expectedValueStr?.startsWith("'") || expectedValueStr?.startsWith('"')) {
-                            expectedValue = expectedValueStr.replace(/['"]/g, '');
-                        } else if (expectedValueStr === 'true') expectedValue = true;
-                        else if (expectedValueStr === 'false') expectedValue = false;
-                        else if (expectedValueStr === 'null') expectedValue = null;
-                        else if (!isNaN(Number(expectedValueStr))) expectedValue = Number(expectedValueStr);
-
-                        if (operator === '==') return actualValue == expectedValue;
-                        if (operator === '!=') return actualValue != expectedValue;
-                        return false;
-                    } catch { return false; }
-                }
-                if (r.matchType === 'body_json') {
-                   try { return isSubset(JSON.parse(r.matchExpression), JSON.parse(requestBody)); } catch { return false; }
-                }
-                return false;
-            });
-        }
-
-        if (!selectedResponse) {
-            matchedStrategy = 'FALLBACK (Default)';
-            if (endpoint.defaultResponseId) {
-                selectedResponse = responses.find(r => r.id === endpoint.defaultResponseId);
-            }
-            if (!selectedResponse) selectedResponse = responses[0];
-        }
-    }
-
-    if (!selectedResponse) return null;
-
-    this.notifyLog({
+    const commonLogFields = {
         id: generateId(),
         projectId,
         timestamp: start,
         method: method as any,
         path,
-        status: selectedResponse.statusCode,
-        duration: 0, 
         requestBody,
-        responseBody: selectedResponse.body,
-        responseName: selectedResponse.name
+        duration: Date.now() - start,
+    };
+
+    if (!result) {
+        // If findMatch returns null, it means no project/endpoint found, OR project stopped.
+        // We need to differentiate for logging, but findMatch abstraction hides details.
+        // For simplicity, we check project status here briefly or assume 404/503 based on data.
+        const project = this.data.projects.find(p => p.id === projectId);
+        if (!project || project.status === 'stopped') {
+            this.notifyLog({
+                ...commonLogFields,
+                status: 503,
+                responseBody: JSON.stringify({ error: "Server stopped" }),
+                responseName: "System Error"
+            });
+        } else {
+             this.notifyLog({
+                ...commonLogFields,
+                status: 404,
+                responseBody: JSON.stringify({ error: "Not Found" }),
+                responseName: "System Error"
+            });
+        }
+        return null;
+    }
+
+    this.notifyLog({
+        ...commonLogFields,
+        status: result.response.statusCode,
+        responseBody: result.response.body,
+        responseName: result.response.name
     });
 
-    return { endpoint, response: selectedResponse, matchedStrategy };
+    return result;
   }
 
   importSwagger(projectId: string, swaggerJson: any) {
