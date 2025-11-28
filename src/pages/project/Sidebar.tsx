@@ -1,13 +1,12 @@
-
-
 import React, { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import { Plus, Search, Upload, ChevronDown, ChevronRight, Folder, Tag, Download } from 'lucide-react';
+import { Plus, Search, Upload, ChevronDown, ChevronRight, Folder, Tag, Download, Layers } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { MockEndpoint } from '../../lib/types';
 import { store } from '../../lib/store';
 import { cn, METHOD_COLORS } from '../../lib/utils';
 import { Input } from '../../components/ui/Input';
+import { Badge } from '../../components/ui/Badge';
 
 interface SidebarProps {
   endpoints: MockEndpoint[];
@@ -28,6 +27,12 @@ const Sidebar = ({
   const [search, setSearch] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   
+  // Calculate response counts efficiently
+  const responseCounts = useMemo(() => {
+      if (!projectId) return {};
+      return store.getResponseCounts(projectId);
+  }, [endpoints, projectId]);
+
   // Grouping Logic
   const groupedEndpoints = useMemo<Record<string, MockEndpoint[]>>(() => {
       const groups: Record<string, MockEndpoint[]> = {};
@@ -142,26 +147,37 @@ const Sidebar = ({
                         
                         {!collapsedGroups[group] && (
                             <div className="pl-2 mt-1 space-y-0.5 border-l border-gray-800 ml-3">
-                                {groupEndpoints.map(endpoint => (
-                                    <button
-                                        key={endpoint.id}
-                                        onClick={() => onSelectEndpoint(endpoint.id)}
-                                        className={cn(
-                                            "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-all group relative",
-                                            selectedEndpointId === endpoint.id 
-                                                ? "bg-primary/10 text-primary border-l-2 border-primary" 
-                                                : "text-gray-400 hover:bg-gray-800 hover:text-gray-200 border-l-2 border-transparent"
-                                        )}
-                                    >
-                                        <span className={cn(
-                                            "text-[9px] font-bold uppercase w-8 text-left",
-                                            METHOD_COLORS[endpoint.method].split(' ')[0] // Just take the text color
-                                        )}>
-                                            {endpoint.method}
-                                        </span>
-                                        <span className="truncate flex-1 text-left text-xs">{endpoint.name}</span>
-                                    </button>
-                                ))}
+                                {groupEndpoints.map(endpoint => {
+                                    const responseCount = responseCounts[endpoint.id] || 0;
+                                    
+                                    return (
+                                        <button
+                                            key={endpoint.id}
+                                            onClick={() => onSelectEndpoint(endpoint.id)}
+                                            className={cn(
+                                                "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-all group relative",
+                                                selectedEndpointId === endpoint.id 
+                                                    ? "bg-primary/10 text-primary border-l-2 border-primary" 
+                                                    : "text-gray-400 hover:bg-gray-800 hover:text-gray-200 border-l-2 border-transparent"
+                                            )}
+                                        >
+                                            <span className={cn(
+                                                "text-[9px] font-bold uppercase w-8 text-left",
+                                                METHOD_COLORS[endpoint.method].split(' ')[0] // Just take the text color
+                                            )}>
+                                                {endpoint.method}
+                                            </span>
+                                            <span className="truncate flex-1 text-left text-xs">{endpoint.name}</span>
+                                            
+                                            {responseCount > 1 && (
+                                                <Badge variant="default" className="ml-auto text-[9px] h-4 px-1.5 gap-1 bg-gray-800 border border-gray-700 text-gray-400 shadow-none hover:bg-gray-700">
+                                                    <Layers className="w-2.5 h-2.5" />
+                                                    {responseCount}
+                                                </Badge>
+                                            )}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

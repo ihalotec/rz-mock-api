@@ -286,6 +286,20 @@ class MockStore {
     return this.data.responses.filter(r => r.endpointId === endpointId);
   }
 
+  // Optimized method for Sidebar badges
+  getResponseCounts(projectId: string): Record<string, number> {
+    const counts: Record<string, number> = {};
+    const endpoints = this.getEndpoints(projectId);
+    const epIds = new Set(endpoints.map(e => e.id));
+    
+    for (const r of this.data.responses) {
+        if (epIds.has(r.endpointId)) {
+            counts[r.endpointId] = (counts[r.endpointId] || 0) + 1;
+        }
+    }
+    return counts;
+  }
+
   createResponse(endpointId: string, name: string, body: string, statusCode = 200): MockResponse {
     const newResponse: MockResponse = {
       id: generateId(),

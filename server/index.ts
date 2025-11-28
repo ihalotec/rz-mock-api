@@ -14,7 +14,7 @@ const PORT = 3001;
 const db = new Database('mock.db');
 
 app.use(cors() as any);
-app.use(express.json());
+app.use(express.json() as any);
 
 // Projects API
 app.get('/api/projects', async (req, res) => {
