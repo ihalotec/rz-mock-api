@@ -20,9 +20,13 @@ type LogListener = (log: LogEntry) => void;
 // Simple object path retrieval for JSON matching
 function getObjectValue(obj: any, path: string): any {
   if (!path) return undefined;
-  // Handle simple dot notation $.key.subkey or key.subkey
+  // Handle simple dot notation $.key.subkey or key.subkey or key[0].subkey
   const cleanPath = path.startsWith('$.') ? path.substring(2) : path;
-  return cleanPath.split('.').reduce((o, i) => (o ? o[i] : undefined), obj);
+  
+  // Normalize array access from [0] to .0
+  const normalizedPath = cleanPath.replace(/\[(\d+)\]/g, '.$1');
+
+  return normalizedPath.split('.').reduce((o, i) => (o ? o[i] : undefined), obj);
 }
 
 // Deep subset matching: checks if 'subset' is present within 'actual'
@@ -393,16 +397,42 @@ class MockStore {
                 if (r.matchType === 'json') {
                     try {
                         const jsonBody = JSON.parse(requestBody);
-                        const parts = r.matchExpression.split('==');
-                        const path = parts[0].trim();
-                        const expectedValue = parts.length > 1 ? parts[1].trim().replace(/['"]/g, '') : undefined;
+                        
+                        // Parse operator: support ==, !=, or existence (no operator)
+                        let operator = '==';
+                        if (r.matchExpression.includes('!=')) operator = '!=';
+                        else if (r.matchExpression.includes('==')) operator = '==';
+                        else operator = 'exists';
+
+                        let path = r.matchExpression.trim();
+                        let expectedValueStr: string | undefined;
+
+                        if (operator !== 'exists') {
+                            const splitIdx = r.matchExpression.indexOf(operator);
+                            path = r.matchExpression.substring(0, splitIdx).trim();
+                            expectedValueStr = r.matchExpression.substring(splitIdx + operator.length).trim();
+                        }
+                        
                         const actualValue = getObjectValue(jsonBody, path);
 
-                        if (expectedValue !== undefined) {
-                            return String(actualValue) === expectedValue;
-                        } else {
-                            return actualValue !== undefined;
+                        if (operator === 'exists') {
+                            return actualValue !== undefined && actualValue !== null;
                         }
+
+                        // Smart value parsing
+                        let expectedValue: any = expectedValueStr;
+                        // remove quotes
+                        if (expectedValueStr?.startsWith("'") || expectedValueStr?.startsWith('"')) {
+                            expectedValue = expectedValueStr.replace(/['"]/g, '');
+                        } else if (expectedValueStr === 'true') expectedValue = true;
+                        else if (expectedValueStr === 'false') expectedValue = false;
+                        else if (expectedValueStr === 'null') expectedValue = null;
+                        else if (!isNaN(Number(expectedValueStr))) expectedValue = Number(expectedValueStr);
+
+                        if (operator === '==') return actualValue == expectedValue;
+                        if (operator === '!=') return actualValue != expectedValue;
+
+                        return false;
                     } catch (e) { return false; }
                 }
 

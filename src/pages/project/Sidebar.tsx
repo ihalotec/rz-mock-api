@@ -119,7 +119,7 @@ const Sidebar = ({
                     No endpoints found.
                 </div>
             ) : (
-                Object.entries(groupedEndpoints).map(([group, groupEndpoints]) => (
+                Object.entries(groupedEndpoints).map(([group, groupEndpoints]: [string, MockEndpoint[]]) => (
                     <div key={group} className="mb-2">
                         <button 
                             onClick={() => toggleGroup(group)}

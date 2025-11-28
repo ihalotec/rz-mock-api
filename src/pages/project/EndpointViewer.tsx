@@ -461,7 +461,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                                     onChange={(e) => handleMatchConditionChange('type', e.target.value)}
                                                 >
                                                     <option value="">No Condition (Fallback)</option>
-                                                    <option value="json">JSON Property (Simple JQ)</option>
+                                                    <option value="json">JSON Path (Key == Value)</option>
                                                     <option value="body_json">JSON Body Subset (Partial Match)</option>
                                                     <option value="regex">Regex Body Match</option>
                                                 </select>
@@ -469,7 +469,7 @@ const EndpointViewer = ({ endpoint, onUpdate }: EndpointViewerProps) => {
                                             <div className="flex-1">
                                                 {editResponse.matchType === 'json' && (
                                                     <Input 
-                                                        placeholder="e.g. $.type == 'admin'" 
+                                                        placeholder="e.g. user.role == 'admin', items[0].id != 5, or just 'isActive'" 
                                                         className="h-9" 
                                                         value={editResponse.matchExpression || ''}
                                                         onChange={(e) => handleMatchConditionChange('expression', e.target.value)}
